@@ -36,7 +36,7 @@ params_for_file() {
 		TGFX16:bin|TGFX16:pce)
 			printf 'f 0 1\n'
 			;;
-		MegaDrive:bin|MegaDrive:gen|MegaDrive:md|S32X:32x|SMS:sms|N64:n64|N64:z64|NeoGeo:neo)
+		MegaDrive:bin|MegaDrive:gen|MegaDrive:md|SMS:sms|N64:n64|N64:z64|NeoGeo:neo)
 			printf 'f 1 1\n'
 			;;
 		MegaCD:cue|MegaCD:chd|Saturn:cue|Saturn:chd|PSX:cue|PSX:chd|PSX:exe)
@@ -52,12 +52,8 @@ params_for_file() {
 }
 
 xml_escape() {
-	local s="$1"
-	s="${s//&/&amp;}"
-	s="${s//</&lt;}"
-	s="${s//>/&gt;}"
-	s="${s//\"/&quot;}"
-	printf '%s' "$s"
+	# Escape ampersand first; sed replacement literals work across Bash versions.
+	printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g'
 }
 
 build_mgl() {
@@ -67,16 +63,55 @@ build_mgl() {
 	local type
 	local index
 	local delay
+	local params tmp escaped_core escaped_file
 
-	read -r type index delay <<<"$(params_for_file "$rel")"
+	if ! params="$(params_for_file "$rel")"; then
+		echo "Unsupported game type: $rel" >&2
+		return 1
+	fi
+	read -r type index delay <<<"$params"
 
-	cat >"$MGL_FILE" <<EOF
+	if ! escaped_core="$(xml_escape "$core")" || ! escaped_file="$(xml_escape "$file")"; then
+		echo "Failed to escape MGL values" >&2
+		return 1
+	fi
+	if [[ -d "$MGL_FILE" ]]; then
+		echo "Failed to write MGL: destination is a directory: $MGL_FILE" >&2
+		return 1
+	fi
+	tmp="$(mktemp "${MGL_FILE}.XXXXXX")" || { echo "Failed to write MGL: $MGL_FILE" >&2; return 1; }
+	if ! cat >"$tmp" <<EOF
 <mistergamedescription>
-  <rbf>$(xml_escape "$core")</rbf>
-  <file delay="${delay}" type="${type}" index="${index}" path="$(xml_escape "${file}")"/>
+  <rbf>${escaped_core}</rbf>
+  <file delay="${delay}" type="${type}" index="${index}" path="${escaped_file}"/>
 </mistergamedescription>
 EOF
+	then
+		rm -f "$tmp"
+		echo "Failed to write MGL: $MGL_FILE" >&2
+		return 1
+	fi
+	if ! mv -f "$tmp" "$MGL_FILE"; then
+		rm -f "$tmp"
+		echo "Failed to replace MGL: $MGL_FILE" >&2
+		return 1
+	fi
 	printf '%s\n' "$MGL_FILE"
+}
+
+random_index() {
+	local count="$1" value limit
+	# Two 15-bit draws cover large libraries. Reject the uneven tail so every
+	# index has the same probability when count does not divide the range.
+	(( count > 0 && count <= 1073741824 )) || return 1
+	limit=$((1073741824 - 1073741824 % count))
+	while :; do
+		value=$(((RANDOM << 15) | RANDOM))
+		if (( value < limit )); then
+			printf '%s\n' "$((value % count))"
+			return 0
+		fi
+	done
 }
 
 if [[ ! -s "$CACHE_FILE" ]]; then
@@ -86,6 +121,8 @@ fi
 
 declare -a games=()
 while IFS= read -r line; do
+	rel="${line%%$'\t'*}"
+	[[ -f "${GAMES_ROOT%/}/$rel" ]] || continue
 	games+=("$line")
 done < "$CACHE_FILE"
 
@@ -94,12 +131,13 @@ if (( ${#games[@]} == 0 )); then
 	exit 1
 fi
 
-choice="${games[$((RANDOM % ${#games[@]}))]}"
+index="$(random_index "${#games[@]}")" || exit 1
+choice="${games[$index]}"
 rel="${choice%%$'\t'*}"
 core="${choice#*$'\t'}"
 
 printf 'picked: %s\n' "$rel" >>"$LOG_FILE"
 
-mgl="$(build_mgl "$core" "$rel")"
+mgl="$(build_mgl "$core" "$rel")" || exit 1
 printf 'load_core %s\n' "$mgl" > "$MISTER_CMD"
 printf 'done\n'

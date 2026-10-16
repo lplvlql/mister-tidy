@@ -13,7 +13,7 @@ One script that migrates a standard MiSTer card layout into the simplified layou
 ## How to use it
 
 - On MiSTer, run `mister-simp.sh` from `scripts/`
-- With no argument, it runs on the parent folder of `scripts/`
+- With no argument, it targets `/media/fat`
 - With a target path, it runs on that path instead
 
 ## Helper scripts

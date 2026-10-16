@@ -2,8 +2,16 @@
 
 set -euo pipefail
 
-ROOT="${1:-${ROOT:-/media/fat}}"
-ROOT_PATH="${ROOT%/}"
+# An explicit empty target is invalid, rather than a request for the default.
+ROOT="${1-${ROOT-/media/fat}}"
+[[ -n "$ROOT" && -d "$ROOT" ]] || { echo "invalid card directory: $ROOT" >&2; exit 1; }
+ROOT_PATH="$(cd -- "$ROOT" && pwd -P)"
+HOME_PATH="$(cd -- "$HOME" && pwd -P)"
+if [[ "$ROOT_PATH" == / || "$ROOT_PATH" == "$HOME_PATH" ||
+      ! -f "$ROOT_PATH/MiSTer" || ! -f "$ROOT_PATH/menu.rbf" ]]; then
+  echo "refusing cleanup: target must be a MiSTer card, not / or home" >&2
+  exit 1
+fi
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 LOG_FILE="${MISTER_SIMP_LOG_FILE:-${SCRIPT_DIR}/.log}"
 
@@ -33,7 +41,6 @@ CORE_NAMES=(
   "NES"
   "NeoGeo"
   "PSX"
-  "S32X"
   "Saturn"
   "SMS"
   "SNES"
@@ -50,12 +57,17 @@ ROOT_DIRS=(
 )
 
 SCRIPTS_FILES=(
+  "mister-simp.sh"
   "cache.sh"
   "clean.sh"
   "delete.sh"
   "last.sh"
   "random.sh"
   "update.sh"
+  ".cache"
+  ".mgl"
+  ".manifest"
+  ".log"
 )
 
 GAME_DIRS=(
@@ -67,9 +79,7 @@ GAME_DIRS=(
   "NES"
   "NeoGeo-CD"
   "NeoGeo"
-  "NeoGeoPocket"
   "PSX"
-  "S32X"
   "SMS"
   "SNES"
   "Saturn"
@@ -87,34 +97,59 @@ GAME_BLACKLIST=(
   "N64/N64 Controller Tester.z64"
   "NeoGeo/gog-romsets.xml"
   "NeoGeo/gog-broken-romsets.xml"
-  "NeoGeoPocket/.delme"
 )
 
 lowercase() {
   printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
 }
 
-case_only_rename() {
-  local entry="$1"
-  local dst="$2"
-  local base="${entry##*/}"
-  local tmp="${entry%/*}/.${base}"
-
-  mv "$entry" "$tmp"
-  rm -rf "$dst"
-  mv "$tmp" "$dst"
+check_destination() {
+  local entry="$1" dst="$2"
+  if [[ ( -e "$dst" || -L "$dst" ) && ! "$entry" -ef "$dst" ]]; then
+    echo "refusing normalization collision: $entry -> $dst" >&2
+    exit 1
+  fi
 }
 
 move_or_rename() {
-  local entry="$1"
-  local dst="$2"
-
-  if [[ "$(lowercase "${entry##*/}")" == "$(lowercase "${dst##*/}")" ]]; then
-    case_only_rename "$entry" "$dst"
+  local entry="$1" dst="$2" tmp
+  check_destination "$entry" "$dst"
+  if [[ "$entry" -ef "$dst" ]]; then
+    # On a case-insensitive card both spellings identify the same directory.
+    # Use a unique temporary directory without deleting either spelling.
+    tmp="$(mktemp -d "${entry%/*}/.mister-rename.XXXXXX")"
+    mv "$entry" "$tmp/entry"
+    mv "$tmp/entry" "$dst"
+    rmdir "$tmp"
   else
-    rm -rf "$dst"
     mv "$entry" "$dst"
   fi
+}
+
+# Check all normalization collisions before pruning anything. Reject directory
+# symlinks so cleanup cannot traverse into a tree outside the selected card.
+preflight() {
+  local entry base canonical child child_name
+  for entry in "$ROOT_PATH"/* "$ROOT_PATH"/.*; do
+    [[ -e "$entry" || -L "$entry" ]] || continue
+    base="${entry##*/}"
+    case "$base" in .|..) continue ;; esac
+    if canonical="$(canonical_from_whitelist "$base" "${ROOT_DIRS[@]}")"; then
+      [[ ! -L "$entry" && -d "$entry" ]] || { echo "invalid card folder: $entry" >&2; exit 1; }
+      check_destination "$entry" "$ROOT_PATH/$canonical"
+      if [[ "$canonical" == games ]]; then
+        for child in "$entry"/* "$entry"/.*; do
+          [[ -e "$child" || -L "$child" ]] || continue
+          child_name="${child##*/}"
+          case "$child_name" in .|..) continue ;; esac
+          if canonical="$(canonical_from_whitelist "$child_name" "${GAME_DIRS[@]}")"; then
+            [[ ! -L "$child" && -d "$child" ]] || { echo "invalid game folder: $child" >&2; exit 1; }
+            check_destination "$child" "$entry/$canonical"
+          fi
+        done
+      fi
+    fi
+  done
 }
 
 canonical_from_whitelist() {
@@ -133,7 +168,7 @@ canonical_from_whitelist() {
 normalize_root() {
   local entry base dst
   for entry in "${ROOT_PATH}"/* "${ROOT_PATH}"/.*; do
-    [[ -e "$entry" ]] || continue
+    [[ -e "$entry" || -L "$entry" ]] || continue
     case "${entry##*/}" in
       .|..) continue ;;
     esac
@@ -151,7 +186,7 @@ normalize_root() {
 prune_root() {
   local entry base keep prefix
   for entry in "${ROOT_PATH}"/* "${ROOT_PATH}"/.*; do
-    [[ -e "$entry" ]] || continue
+    [[ -e "$entry" || -L "$entry" ]] || continue
     case "${entry##*/}" in
       .|..) continue ;;
     esac
@@ -197,7 +232,7 @@ prune_root() {
 normalize_games() {
   local entry base dst
   for entry in "${ROOT_PATH}/games"/* "${ROOT_PATH}/games"/.*; do
-    [[ -e "$entry" ]] || continue
+    [[ -e "$entry" || -L "$entry" ]] || continue
     case "${entry##*/}" in
       .|..) continue ;;
     esac
@@ -212,61 +247,39 @@ normalize_games() {
   done
 }
 
-normalize_scripts() {
-  local entry base dst tmp
-  for entry in "${ROOT_PATH}"/* "${ROOT_PATH}"/.*; do
-    [[ -e "$entry" ]] || continue
-    case "${entry##*/}" in
-      .|..) continue ;;
-    esac
-    base="${entry##*/}"
-    if ! dst="$(canonical_from_whitelist "$base" "scripts")"; then
-      continue
-    fi
-    dst="${ROOT_PATH}/${dst}"
-    if [[ "$entry" != "$dst" ]]; then
-      move_or_rename "$entry" "$dst"
-    fi
-  done
-}
-
 prune_games() {
-  local entry rel name keep banned
+  local entry name keep banned
   if [[ -d "${ROOT_PATH}/games" ]]; then
-    while IFS= read -r -d '' entry; do
-      rel="${entry#${ROOT_PATH}/games/}"
-      for banned in "${GAME_BLACKLIST[@]}"; do
-        case "${rel}" in
-          "${banned}"|"${banned}"/*)
-            rm -rf "${entry}"
-            continue 2
-            ;;
-        esac
-      done
-    done < <(for entry in "${ROOT_PATH}/games"/* "${ROOT_PATH}/games"/.*; do [[ -e "$entry" ]] && printf '%s\0' "$entry"; done)
+    if [[ -d "${ROOT_PATH}/games/SMS" ]]; then
+      find "${ROOT_PATH}/games/SMS" -type f -iname '*.gg' -exec rm -f {} +
+    fi
+    for banned in "${GAME_BLACKLIST[@]}"; do
+      rm -rf "${ROOT_PATH}/games/${banned}"
+    done
 
-    while IFS= read -r -d '' entry; do
-      rel="${entry#${ROOT_PATH}/games/}"
-      name="${rel%%/*}"
+    for entry in "${ROOT_PATH}/games"/* "${ROOT_PATH}/games"/.*; do
+      [[ -e "$entry" || -L "$entry" ]] || continue
+      name="${entry##*/}"
+      case "$name" in .|..) continue ;; esac
       keep=0
       for allowed in "${GAME_DIRS[@]}"; do
-        if [[ "$(lowercase "$name")" == "$(lowercase "$allowed")" ]]; then
+        if [[ "$name" == "$allowed" ]]; then
           keep=1
           break
         fi
       done
-      if [[ "$keep" -eq 0 ]]; then
-        rm -rf "${ROOT_PATH}/games/$name"
-      fi
-    done < <(for entry in "${ROOT_PATH}/games"/*; do [[ -d "$entry" ]] && printf '%s\0' "$entry"; done)
+      [[ "$keep" -eq 1 ]] || rm -rf "$entry"
+    done
   fi
 }
 
 prune_scripts() {
   local entry name keep
   if [[ -d "${ROOT_PATH}/scripts" ]]; then
-    while IFS= read -r -d '' entry; do
+    for entry in "${ROOT_PATH}/scripts"/* "${ROOT_PATH}/scripts"/.*; do
+      [[ -e "$entry" || -L "$entry" ]] || continue
       name="${entry##*/}"
+      case "$name" in .|..) continue ;; esac
       keep=0
       for allowed in "${SCRIPTS_FILES[@]}"; do
         if [[ "$(lowercase "$name")" == "$(lowercase "$allowed")" ]]; then
@@ -277,9 +290,11 @@ prune_scripts() {
       if [[ "$keep" -eq 0 ]]; then
         rm -rf "$entry"
       fi
-    done < <(for entry in "${ROOT_PATH}/scripts"/* "${ROOT_PATH}/scripts"/.*; do [[ -e "$entry" ]] && printf '%s\0' "$entry"; done)
+    done
   fi
 }
+
+preflight
 
 stage 'normalize root'
 normalize_root
@@ -289,8 +304,6 @@ stage 'normalize games'
 normalize_games
 stage 'prune games'
 prune_games
-stage 'normalize scripts'
-normalize_scripts
 stage 'prune scripts'
 prune_scripts
 

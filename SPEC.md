@@ -8,7 +8,7 @@ Convert a standard MiSTer SD card into the simplified layout used by this repo.
 
 - `mister-simp.sh` is the only file the user needs to download at first
 - It runs from `scripts/` on MiSTer
-- With no argument, it targets the parent folder of `scripts/`
+- With no argument, it targets `/media/fat`
 - With a target argument, it can run against a local path
 - After a successful migration it removes itself
 
@@ -19,7 +19,7 @@ Keep:
 - `MiSTer`
 - `menu.rbf`
 - the whitelisted `MiSTer*.ini` files
-- the whitelisted root `*_YYYYMMDD.rbf` files
+- root `<family>_*.rbf` files for the supported core families
 - `config/`
 - `games/`
 - `linux/`
@@ -41,7 +41,6 @@ Use these canonical labels for folder names and launch families:
 - `NeoGeo`
 - `NES`
 - `PSX`
-- `S32X`
 - `Saturn`
 - `SMS`
 - `SNES`
@@ -58,10 +57,8 @@ Keep only these top-level `games/` folders:
 - `N64`
 - `NeoGeo`
 - `NeoGeo-CD`
-- `NeoGeoPocket`
 - `NES`
 - `PSX`
-- `S32X`
 - `SMS`
 - `SNES`
 - `Saturn`
@@ -71,7 +68,7 @@ Keep only these top-level `games/` folders:
 Mapping rules:
 
 - `NES` includes FDS content
-- `SMS` includes Game Gear content
+- `SMS` contains SMS content only
 - `NeoGeo-CD` launches with `NeoGeo`
 - `TGFX16-CD` launches with `TurboGrafx16`
 
@@ -98,7 +95,7 @@ The distribution manifest uses `base_files_url` as the download base.
 - `cache.sh` builds `scripts/.cache`
 - `random.sh` builds `scripts/.mgl` and launches it
 - `last.sh` reloads `scripts/.mgl`
-- `delete.sh` deletes the selected game and clears `scripts/.mgl`
+- `delete.sh` deletes the selected game, removes its cache entries, and clears `scripts/.mgl`
 
 ## Runtime Files
 
@@ -110,7 +107,4 @@ The distribution manifest uses `base_files_url` as the download base.
 ## Non-Goals
 
 - Do not format storage
-- Do not restore `yc.txt`
-- Do not touch `minerva`
 - Do not modify saves or savestates
-- Do not modify `linux/`

@@ -3,7 +3,16 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-ROOT="${1:-$(cd -- "${SCRIPT_DIR}/.." && pwd)}"
+ROOT="${1-$(cd -- "${SCRIPT_DIR}/.." && pwd)}"
+# Refuse invalid targets before logs, directories, or downloads are created.
+[[ -n "$ROOT" && -d "$ROOT" ]] || { echo "invalid card directory: $ROOT" >&2; exit 1; }
+ROOT="$(cd -- "$ROOT" && pwd -P)"
+HOME_PATH="$(cd -- "$HOME" && pwd -P)"
+if [[ "$ROOT" == / || "$ROOT" == "$HOME_PATH" ||
+      ! -f "$ROOT/MiSTer" || ! -f "$ROOT/menu.rbf" ]]; then
+  echo "refusing update: target must be a MiSTer card, not / or home" >&2
+  exit 1
+fi
 SCRIPTS_ROOT="${ROOT%/}/scripts"
 LOG_FILE="${MISTER_SIMP_LOG_FILE:-${SCRIPT_DIR}/.log}"
 MANIFEST_FILE="${MANIFEST_FILE:-${SCRIPTS_ROOT}/.manifest}"
@@ -22,16 +31,26 @@ GAME_DIRS=(
   MegaDrive
   N64
   NeoGeo-CD
-  NeoGeoPocket
   NES
   NeoGeo
   PSX
-  S32X
   Saturn
   SMS
   SNES
   TGFX16
   TGFX16-CD
+)
+
+GAME_BLACKLIST=(
+  "Gameboy/Palettes"
+  "NES/Palettes"
+  "PSX/240p Test Suite"
+  "PSX/PadTest 1.1"
+  "SNES/240p Test Suite"
+  "MegaDrive/240p Test Suite.bin"
+  "N64/N64 Controller Tester.z64"
+  "NeoGeo/gog-romsets.xml"
+  "NeoGeo/gog-broken-romsets.xml"
 )
 
 CORE_NAMES=(
@@ -43,7 +62,6 @@ CORE_NAMES=(
   NeoGeo
   NES
   PSX
-  S32X
   Saturn
   SMS
   SNES
@@ -90,40 +108,126 @@ read_manifest() {
   jq -r '.files | to_entries[] | [.key, (.value.hash // "")] | @tsv' <<<"$1"
 }
 
+validate_manifest() {
+  # Validate the whole document before any process-substitution readers run.
+  # Slurping also rejects empty input and multiple concatenated JSON documents.
+  jq -e -s '
+    length == 1 and (.[0] |
+      type == "object" and
+      (.base_files_url | type == "string" and length > 0) and
+      (.files | type == "object") and
+      all(.files[];
+        type == "object" and
+        (.hash == null or (.hash | type == "string"))))
+  ' <<<"$1" >/dev/null
+}
+
 manifest_base_url() {
   jq -r '.base_files_url // ""' <<<"$1"
 }
 
+# Download results: 0 copied, 1 hash matched, 2 checksum mismatch,
+# 3 transfer failed, 4 local file operation failed, 5 hash check failed.
+FAILURES=0
+
 download() {
-  local url="$1" dest="$2" tmp="${2}.tmp"
-  mkdir -p "$(dirname -- "$dest")"
-  curl -kfsSL "$url" -o "$tmp"
-  mv -f "$tmp" "$dest"
+  download_with_md5 "$1" "$2" ""
 }
 
 download_with_md5() {
-  local url="$1" dest="$2" hash="$3" tmp="${2}.tmp"
-  mkdir -p "$(dirname -- "$dest")"
+  local url="$1" dest="$2" hash="$3" tmp got mode=644
+  [[ ! -d "$dest" ]] || return 4
+  mkdir -p "$(dirname -- "$dest")" || return 4
   if [[ -n "$hash" && -f "$dest" ]]; then
-    if [[ "$(md5sum "$dest" | awk '{print $1}')" == "$hash" ]]; then
-      return 1
+    got="$(md5sum "$dest" | awk '{print $1}')" || return 5
+    [[ "$got" != "$hash" ]] || return 1
+  fi
+  if [[ -f "$dest" ]]; then
+    # GNU stat on MiSTer/Linux; BSD stat on macOS.
+    mode="$(stat -c '%a' "$dest" 2>/dev/null || stat -f '%Lp' "$dest")" || return 4
+  fi
+  tmp="$(mktemp "${dest}.tmp.XXXXXX")" || return 4
+  if ! curl -kfsSL "$url" -o "$tmp"; then
+    rm -f -- "$tmp"
+    return 3
+  fi
+  if [[ -n "$hash" ]]; then
+    if ! got="$(md5sum "$tmp" | awk '{print $1}')"; then
+      rm -f -- "$tmp"
+      return 5
+    fi
+    if [[ "$got" != "$hash" ]]; then
+      rm -f -- "$tmp"
+      return 2
     fi
   fi
-  curl -kfsSL "$url" -o "$tmp"
-  if [[ -n "$hash" ]]; then
-    local got
-    got="$(md5sum "$tmp" | awk '{print $1}')"
-    [[ "$got" == "$hash" ]] || { rm -f "$tmp"; return 2; }
+  if ! chmod "$mode" "$tmp"; then
+    rm -f -- "$tmp"
+    return 4
   fi
-  mv -f "$tmp" "$dest"
+  if [[ -d "$dest" ]] || ! mv -f "$tmp" "$dest"; then
+    rm -f -- "$tmp"
+    return 4
+  fi
   return 0
+}
+
+manifest_url() {
+  local encoded
+  encoded="$(jq -rn --arg path "$2" '$path | split("/") | map(@uri) | join("/")')" || return 1
+  printf '%s%s' "$1" "$encoded"
+}
+
+record_failure() {
+  done_line "failed: $1 ($2)"
+  FAILURES=$((FAILURES + 1))
+}
+
+safe_destination() {
+  local rel="$1" part path="$ROOT"
+  local -a parts
+  case "$rel" in
+    ''|/*|*/|*//*|*$'\n'*|*$'\r'*|*$'\t'*) return 1 ;;
+  esac
+  IFS=/ read -r -a parts <<<"$rel"
+  for part in "${parts[@]}"; do
+    case "$part" in ''|.|..) return 1 ;; esac
+    path="$path/$part"
+    # Reject symlink components, including a final file symlink.
+    [[ ! -L "$path" ]] || return 1
+  done
+  [[ ! -d "$path" ]]
+}
+
+sync_download() {
+  local name="$1" url="$2" dest="$3" hash="${4:-}" result reason
+  if ! safe_destination "$name"; then
+    record_failure "$name" "unsafe destination"
+    return 2
+  fi
+  if download_with_md5 "$url" "$dest" "$hash"; then
+    done_line "copied: $name"
+    return 0
+  else
+    result=$?
+  fi
+  case "$result" in
+    1) done_line "unchanged: $name"; return 1 ;;
+    2) reason="checksum mismatch" ;;
+    3) reason="download failed" ;;
+    4) reason="local file operation failed" ;;
+    5) reason="hash check failed" ;;
+    *) reason="unexpected download error: $result" ;;
+  esac
+  record_failure "$name" "$reason"
+  return 2
 }
 
 fetch_distribution_manifest() {
   mkdir -p "$(dirname -- "$MANIFEST_FILE")"
-  curl -kfsSL "$DIST_URL" -o "$MANIFEST_FILE"
+  download "$DIST_URL" "$MANIFEST_FILE" || return $?
   if [[ "$(file -b --mime-type "$MANIFEST_FILE")" == "application/zip" ]]; then
-    unzip -p "$MANIFEST_FILE" '*.json' | head -n 1
+    unzip -p "$MANIFEST_FILE" '*.json'
   else
     cat "$MANIFEST_FILE"
   fi
@@ -131,6 +235,12 @@ fetch_distribution_manifest() {
 
 ensure_layout() {
   local d
+  for d in "${ROOT_DIRS[@]}"; do
+    if [[ -L "$ROOT/$d" ]]; then
+      record_failure "$d" "unsafe destination"
+      return 1
+    fi
+  done
   for d in "${ROOT_DIRS[@]}"; do
     mkdir -p "$ROOT/$d"
   done
@@ -140,7 +250,7 @@ ensure_layout() {
 sync_root() {
   local manifest="$1" base_url
   base_url="$(manifest_base_url "$manifest")"
-  local key name hash rel url
+  local key name hash rel url result
   while IFS=$'\t' read -r key hash; do
     [[ -n "$key" ]] || continue
     rel="${key#|}"
@@ -154,12 +264,17 @@ sync_root() {
       fi
     done
     [[ "$keep" -eq 1 ]] || continue
-    url="${base_url}${key#|}"
+    url="$(manifest_url "$base_url" "${key#|}")"
     status "$name"
-    if download_with_md5 "$url" "$ROOT/$name" "$hash"; then
-      done_line "copied: $name"
+    if sync_download "$name" "$url" "$ROOT/$name" "$hash"; then
+      result=0
     else
-      done_line "unchanged: $name"
+      result=$?
+    fi
+    if [[ "$result" -le 1 && "$name" == MiSTer ]]; then
+      if ! chmod a+x "$ROOT/$name"; then
+        record_failure "$name" "chmod failed"
+      fi
     fi
   done < <(read_manifest "$manifest" | sed -n '/^[^|]/p')
 }
@@ -171,13 +286,9 @@ sync_linux() {
   while IFS=$'\t' read -r key hash; do
     rel="${key#|}"
     [[ "$rel" == linux/* ]] || continue
-    url="${base_url}${key#|}"
+    url="$(manifest_url "$base_url" "${key#|}")"
     status "$rel"
-    if download_with_md5 "$url" "$ROOT/$rel" "$hash"; then
-      done_line "copied: $rel"
-    else
-      done_line "unchanged: $rel"
-    fi
+    sync_download "$rel" "$url" "$ROOT/$rel" "$hash" || :
   done < <(read_manifest "$manifest")
 }
 
@@ -201,7 +312,7 @@ sync_cores() {
           best_date="${BASH_REMATCH[1]}"
           best_key="$key"
           best_hash="$hash"
-          best_url="${base_url}${key#|}"
+          best_url="$(manifest_url "$base_url" "${key#|}")"
         fi
       fi
     done < <(read_manifest "$manifest")
@@ -210,11 +321,7 @@ sync_cores() {
     name="${name##*/}"
     status "$name"
     printf 'core match: %s -> %s\n' "$best_key" "$ROOT/$name" >>"$LOG_FILE"
-    if download_with_md5 "$best_url" "$ROOT/$name" "$best_hash"; then
-      done_line "copied: $name"
-    else
-      done_line "unchanged: $name"
-    fi
+    sync_download "$name" "$best_url" "$ROOT/$name" "$best_hash" || :
   done
 }
 
@@ -225,67 +332,64 @@ ensure_game_folders() {
   done
 }
 
-sync_games() {
-  local manifest="$1" base_url key rel hash family dest url
-  base_url="$(manifest_base_url "$manifest")"
-  while IFS=$'\t' read -r key hash; do
-    rel="${key#|}"
-    [[ "$rel" == games/* ]] || continue
-    family="${rel#games/}"
-    family="${family%%/*}"
-    case "$family" in
-      Gameboy|GBA|MegaCD|MegaDrive|N64|NeoGeo|NeoGeo-CD|NeoGeoPocket|NES|PSX|S32X|Saturn|SMS|SNES|TGFX16|TGFX16-CD) ;;
-      *) continue ;;
+game_excluded() {
+  local rel="${1#games/}" banned
+  for banned in "${GAME_BLACKLIST[@]}"; do
+    case "$rel" in
+      "$banned"|"$banned"/*) return 0 ;;
     esac
-    url="${base_url}${key#|}"
-    dest="$ROOT/$rel"
-    status "$rel"
-    if download_with_md5 "$url" "$dest" "$hash"; then
-      done_line "copied: $rel"
-    else
-      done_line "unchanged: $rel"
-    fi
-  done < <(read_manifest "$manifest")
+  done
+  return 1
 }
 
-sync_bios() {
-  local manifest="$1" base_url key rel hash family dest url
+sync_games() {
+  local manifest="$1" preserve_unhashed="${2:-0}" base_url key rel hash family dest url allowed keep
   base_url="$(manifest_base_url "$manifest")"
   while IFS=$'\t' read -r key hash; do
     rel="${key#|}"
     [[ "$rel" == games/* ]] || continue
+    game_excluded "$rel" && continue
+    [[ "$rel" == *.[gG][gG] ]] && continue
     family="${rel#games/}"
     family="${family%%/*}"
-    case "$family" in
-      Gameboy|GBA|MegaCD|MegaDrive|N64|NeoGeo|NeoGeo-CD|NeoGeoPocket|NES|PSX|S32X|Saturn|SMS|SNES|TGFX16|TGFX16-CD) ;;
-      *) continue ;;
-    esac
-    url="${base_url}${key#|}"
+    keep=0
+    for allowed in "${GAME_DIRS[@]}"; do
+      if [[ "$family" == "$allowed" ]]; then
+        keep=1
+        break
+      fi
+    done
+    [[ "$keep" -eq 1 ]] || continue
+    url="$(manifest_url "$base_url" "${key#|}")"
     dest="$ROOT/$rel"
     status "$rel"
-    if [[ -n "$hash" ]]; then
-      if download_with_md5 "$url" "$dest" "$hash"; then
-        done_line "copied: $rel"
-      else
-        done_line "unchanged: $rel"
-      fi
-    elif [[ -f "$dest" ]]; then
+    if ! safe_destination "$rel"; then
+      record_failure "$rel" "unsafe destination"
+      continue
+    fi
+    if [[ "$preserve_unhashed" -eq 1 && -z "$hash" && -f "$dest" ]]; then
       done_line "unchanged: $rel"
     else
-      download "$url" "$dest"
-      done_line "copied: $rel"
+      sync_download "$rel" "$url" "$dest" "$hash" || :
     fi
   done < <(read_manifest "$manifest")
 }
 
 sync_scripts() {
-  local name url
+  local name url result
   for name in "${SCRIPTS_FILES[@]}"; do
     url="$SCRIPTS_URL/$name"
     status "scripts/$name"
-    download "$url" "$SCRIPTS_ROOT/$name"
-    chmod +x "$SCRIPTS_ROOT/$name"
-    done_line "copied: scripts/$name"
+    if sync_download "scripts/$name" "$url" "$SCRIPTS_ROOT/$name"; then
+      result=0
+    else
+      result=$?
+    fi
+    if [[ "$result" -le 1 ]]; then
+      if ! chmod a+x "$SCRIPTS_ROOT/$name"; then
+        record_failure "scripts/$name" "chmod failed"
+      fi
+    fi
   done
 }
 
@@ -293,9 +397,23 @@ main() {
   local distribution_manifest bios_manifest
   ensure_layout
   stage distribution
-  distribution_manifest="$(fetch_distribution_manifest)"
+  if ! distribution_manifest="$(fetch_distribution_manifest)"; then
+    record_failure "distribution manifest" "fetch or extraction failed"
+    return 1
+  fi
+  if ! validate_manifest "$distribution_manifest"; then
+    record_failure "distribution manifest" "invalid JSON or structure"
+    return 1
+  fi
   stage bios
-  bios_manifest="$(curl -kfsSL "$BIOS_URL")"
+  if ! bios_manifest="$(curl -kfsSL "$BIOS_URL")"; then
+    record_failure "BIOS manifest" "download failed"
+    return 1
+  fi
+  if ! validate_manifest "$bios_manifest"; then
+    record_failure "BIOS manifest" "invalid JSON or structure"
+    return 1
+  fi
   stage root
   sync_root "$distribution_manifest"
   stage linux
@@ -305,9 +423,13 @@ main() {
   stage games
   ensure_game_folders
   sync_games "$distribution_manifest"
-  sync_bios "$bios_manifest"
+  sync_games "$bios_manifest" 1
   stage scripts
   sync_scripts
+  if [[ "$FAILURES" -ne 0 ]]; then
+    done_line "update failed: $FAILURES failure(s)"
+    return 1
+  fi
 }
 
 main

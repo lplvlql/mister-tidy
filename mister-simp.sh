@@ -3,8 +3,18 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-ROOT="${1:-/media/fat}"
-ROOT_DIR="${ROOT%/}"
+ROOT="${1-/media/fat}"
+# Validate before creating logs, installing payloads, or removing anything.
+[[ -n "$ROOT" && -d "$ROOT" ]] || { echo "invalid card directory: $ROOT" >&2; exit 1; }
+ROOT_DIR="$(cd -- "$ROOT" && pwd -P)"
+HOME_PATH="$(cd -- "$HOME" && pwd -P)"
+if [[ "$ROOT_DIR" == / || "$ROOT_DIR" == "$HOME_PATH" ||
+      ! -f "$ROOT_DIR/MiSTer" || ! -f "$ROOT_DIR/menu.rbf" ||
+      -L "$ROOT_DIR/scripts" ||
+      ( -e "$ROOT_DIR/scripts" && ! -d "$ROOT_DIR/scripts" ) ]]; then
+  echo "refusing migration: target must be a MiSTer card with a real scripts directory" >&2
+  exit 1
+fi
 SCRIPTS_ROOT="${ROOT_DIR}/scripts"
 script_name="${0##*/}"
 REPO_BASE_URL="${REPO_BASE_URL:-https://raw.githubusercontent.com/lplvlql/mister-simp/refs/heads/main}"
@@ -38,45 +48,36 @@ install_payload() {
   for name in "${SCRIPTS_FILES[@]}"; do
     fetch_script "scripts/$name" "${SCRIPTS_ROOT}/$name"
   done
-  chmod +x "${SCRIPTS_ROOT}"/*.sh
 }
 
 fetch_script() {
   local remote_path="$1"
   local dest="$2"
   local url="${REPO_BASE_URL}/${remote_path}"
-  local tmp="${dest}.tmp"
+  local tmp
+  [[ ! -d "$dest" ]] || { echo "script destination is a directory: $dest" >&2; return 1; }
+  tmp="$(mktemp "${dest}.tmp.XXXXXX")" || return 1
 
   if [[ "$url" == file://* ]]; then
     local source_path="${url#file://}"
-    cp "$source_path" "$tmp"
+    cp "$source_path" "$tmp" || { rm -f -- "$tmp"; return 1; }
   elif command -v curl >/dev/null 2>&1; then
-    curl -kfsSL "$url" -o "$tmp"
+    curl -kfsSL "$url" -o "$tmp" || { rm -f -- "$tmp"; return 1; }
   else
+    rm -f -- "$tmp"
     echo "curl is required to fetch scripts: $url" >&2
     exit 1
   fi
 
-  mv -f "$tmp" "$dest"
-}
-
-cleanup_bootstrap_scripts() {
-  local entry
-  [[ -d "$SCRIPTS_ROOT" ]] || return 0
-  for entry in "${SCRIPTS_ROOT}"/*; do
-    [[ -e "$entry" ]] || continue
-    local name keep=0
-    name="${entry##*/}"
-    for script in "${SCRIPTS_FILES[@]}"; do
-      if [[ "$name" == "$script" ]]; then
-        keep=1
-        break
-      fi
-    done
-    if [[ "$keep" -eq 0 ]]; then
-      rm -rf "$entry"
-    fi
-  done
+  # Publish each helper ready to run, even if a later download fails.
+  if ! chmod a+rx "$tmp"; then
+    rm -f -- "$tmp"
+    return 1
+  fi
+  if [[ -d "$dest" ]] || ! mv -f "$tmp" "$dest"; then
+    rm -f -- "$tmp"
+    return 1
+  fi
 }
 
 ensure_bootstrap_scripts() {
@@ -100,7 +101,6 @@ main() {
   done
   install_payload
   ensure_bootstrap_scripts
-  cleanup_bootstrap_scripts
   "${SCRIPTS_ROOT}/clean.sh" "$ROOT_DIR"
   "${SCRIPTS_ROOT}/update.sh" "$ROOT_DIR"
   "${SCRIPTS_ROOT}/cache.sh" "$ROOT_DIR"

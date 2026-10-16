@@ -30,7 +30,7 @@ core_for_file() {
 		NES:nes|NES:fds) printf 'NES\n' ;;
 		SNES:sfc|SNES:smc|SNES:bin|SNES:bs) printf 'SNES\n' ;;
 		N64:n64|N64:z64) printf 'N64\n' ;;
-		SMS:sms|SMS:gg) printf 'SMS\n' ;;
+		SMS:sms) printf 'SMS\n' ;;
 		MegaDrive:bin|MegaDrive:gen|MegaDrive:md) printf 'MegaDrive\n' ;;
 		MegaCD:cue|MegaCD:chd) printf 'MegaCD\n' ;;
 		NeoGeo:neo|NeoGeo-CD:cue|NeoGeo-CD:chd) printf 'NeoGeo\n' ;;
@@ -42,9 +42,17 @@ core_for_file() {
 }
 
 build_cache() {
-	local tmp="${CACHE_FILE}.tmp"
-	local folder file rel base core count
-	: > "$tmp"
+	local tmp
+	local folder file rel base core scan
+	[[ -d "$GAMES_ROOT" ]] || { echo "Missing games root: $GAMES_ROOT" >&2; return 1; }
+	GAMES_ROOT="$(cd -- "$GAMES_ROOT" && pwd -P)"
+	[[ ! -d "$CACHE_FILE" ]] || { echo "Cache destination is a directory: $CACHE_FILE" >&2; return 1; }
+	tmp="$(mktemp "${CACHE_FILE}.tmp.XXXXXX")"
+	cache_tmp="$tmp"
+	cache_scan=""
+	trap 'rm -f -- "$cache_tmp" "$cache_scan"' EXIT
+	scan="$(mktemp "${CACHE_FILE}.scan.XXXXXX")"
+	cache_scan="$scan"
 	for folder in \
 		Gameboy \
 		GBA \
@@ -55,7 +63,6 @@ build_cache() {
 		NeoGeo-CD \
 		NES \
 		PSX \
-		S32X \
 		Saturn \
 		SMS \
 		SNES \
@@ -63,6 +70,12 @@ build_cache() {
 		TGFX16-CD
 	do
 		stage "$folder"
+		# Unsupported/absent families are optional, but scan errors are fatal.
+		[[ -e "$GAMES_ROOT/$folder" || -L "$GAMES_ROOT/$folder" ]] || continue
+		if [[ -L "$GAMES_ROOT/$folder" || ! -d "$GAMES_ROOT/$folder" ]] || ! find "$GAMES_ROOT/$folder" -type f -print0 > "$scan"; then
+			echo "Failed to scan: $GAMES_ROOT/$folder" >&2
+			return 1
+		fi
 		while IFS= read -r -d '' file; do
 			rel="${file#$GAMES_ROOT/}"
 			base="${rel##*/}"
@@ -80,10 +93,12 @@ build_cache() {
 						;;
 				esac
 			fi
-		done < <(find "$GAMES_ROOT/$folder" -type f -print0 2>/dev/null)
+		done < "$scan"
 	done
-	rm -f "$CACHE_FILE"
-	mv "$tmp" "$CACHE_FILE"
+	[[ ! -d "$CACHE_FILE" ]] || { echo "Cache destination is a directory: $CACHE_FILE" >&2; return 1; }
+	mv -f "$tmp" "$CACHE_FILE"
+	rm -f "$scan"
+	trap - EXIT
 }
 
 build_cache
