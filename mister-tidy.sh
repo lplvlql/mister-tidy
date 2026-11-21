@@ -4,7 +4,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="${1-/media/fat}"
-# Validate before creating logs, installing payloads, or removing anything.
+# Validate the card before making changes.
 [[ -n "$ROOT" && -d "$ROOT" ]] || { echo "invalid card directory: $ROOT" >&2; exit 1; }
 ROOT_DIR="$(cd -- "$ROOT" && pwd -P)"
 HOME_PATH="$(cd -- "$HOME" && pwd -P)"
@@ -62,14 +62,18 @@ fetch_script() {
     local source_path="${url#file://}"
     cp "$source_path" "$tmp" || { rm -f -- "$tmp"; return 1; }
   elif command -v curl >/dev/null 2>&1; then
-    curl -kfsSL "$url" -o "$tmp" || { rm -f -- "$tmp"; return 1; }
+    if ! curl -fsSL "$url" -o "$tmp"; then
+      rm -f -- "$tmp"
+      printf 'Could not download %s. See %s for the curl error.\n' "$url" "$LOG_FILE"
+      return 1
+    fi
   else
     rm -f -- "$tmp"
     echo "curl is required to fetch scripts: $url" >&2
     exit 1
   fi
 
-  # Publish each helper ready to run, even if a later download fails.
+  # Set permissions before replacing the helper.
   if ! chmod a+rx "$tmp"; then
     rm -f -- "$tmp"
     return 1

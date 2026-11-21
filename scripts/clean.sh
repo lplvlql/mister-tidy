@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-# An explicit empty target is invalid, rather than a request for the default.
+# Reject an explicitly empty target.
 ROOT="${1-${ROOT-/media/fat}}"
 [[ -n "$ROOT" && -d "$ROOT" ]] || { echo "invalid card directory: $ROOT" >&2; exit 1; }
 ROOT_PATH="$(cd -- "$ROOT" && pwd -P)"
@@ -126,8 +126,7 @@ move_or_rename() {
   fi
 }
 
-# Check all normalization collisions before pruning anything. Reject directory
-# symlinks so cleanup cannot traverse into a tree outside the selected card.
+# Check for name collisions and directory symlinks before pruning.
 preflight() {
   local entry base canonical child child_name
   for entry in "$ROOT_PATH"/* "$ROOT_PATH"/.*; do

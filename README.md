@@ -1,31 +1,41 @@
 # Mister Tidy
 
-One script that migrates a standard MiSTer card layout into the simplified layout used by this repo.
+Mister Tidy puts console launchers directly in the MiSTer boot menu.
 
-## What it does
+## Install
 
-- Keeps the required root files and folders
-- Removes everything else that is not on the allowlists
-- Normalizes folder names to the canonical layout
-- Installs the persistent helper scripts into `scripts/`
-- Keeps the helper scripts current on later runs
+**Back up your SD card first.** The installer deletes files outside the allowlists before updating. If the update fails, those files are already gone.
 
-## How to use it
+Copy `mister-tidy.sh` to the SD card’s `scripts/` folder and run it from the MiSTer Scripts menu. It targets `/media/fat` by default. Pass a card path to target another directory.
 
-- On MiSTer, run `mister-tidy.sh` from `scripts/`
-- With no argument, it targets `/media/fat`
-- With a target path, it runs on that path instead
+The installer normalizes folder names, installs the helpers, updates the card, and builds the game cache. It removes itself after a successful run.
+
+## Final SD-card layout
+
+```text
+/
+├── MiSTer
+├── menu.rbf
+├── MiSTer*.ini
+├── NES_<date>.rbf
+├── SNES_<date>.rbf
+├── config/
+├── games/
+├── linux/
+├── saves/
+├── savestates/
+└── scripts/
+```
+
+The two core files are examples. See the [layout specification](SPEC.md) for the full rules.
 
 ## Helper scripts
 
-- `clean.sh` prunes and normalizes the layout
-- `update.sh` syncs core files, game data, and helper scripts
-- `cache.sh` builds the random-game cache
-- `random.sh` picks a cached game and launches it
-- `last.sh` reloads the last generated launch file
-- `delete.sh` deletes the selected game and clears the launch file
-
-## Notes
-
-- Example before/after trees live in [`examples/`](./examples/)
-- The migration entrypoint removes itself after a successful run
+| Script | Action |
+| --- | --- |
+| `clean.sh` | Normalize names and prune the card |
+| `update.sh` | Sync cores, game data, BIOS files, and helpers |
+| `cache.sh` | Build the random-game cache |
+| `random.sh` | Launch a random cached game |
+| `last.sh` | Relaunch the last generated selection |
+| `delete.sh` | Delete the selected game and clear its launch file |

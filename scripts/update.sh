@@ -4,7 +4,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="${1-$(cd -- "${SCRIPT_DIR}/.." && pwd)}"
-# Refuse invalid targets before logs, directories, or downloads are created.
+# Validate the card before making changes.
 [[ -n "$ROOT" && -d "$ROOT" ]] || { echo "invalid card directory: $ROOT" >&2; exit 1; }
 ROOT="$(cd -- "$ROOT" && pwd -P)"
 HOME_PATH="$(cd -- "$HOME" && pwd -P)"
@@ -109,8 +109,7 @@ read_manifest() {
 }
 
 validate_manifest() {
-  # Validate the whole document before any process-substitution readers run.
-  # Slurping also rejects empty input and multiple concatenated JSON documents.
+  # Require exactly one valid manifest before syncing files.
   jq -e -s '
     length == 1 and (.[0] |
       type == "object" and
@@ -147,7 +146,7 @@ download_with_md5() {
     mode="$(stat -c '%a' "$dest" 2>/dev/null || stat -f '%Lp' "$dest")" || return 4
   fi
   tmp="$(mktemp "${dest}.tmp.XXXXXX")" || return 4
-  if ! curl -kfsSL "$url" -o "$tmp"; then
+  if ! curl -fsSL "$url" -o "$tmp"; then
     rm -f -- "$tmp"
     return 3
   fi
@@ -406,7 +405,7 @@ main() {
     return 1
   fi
   stage bios
-  if ! bios_manifest="$(curl -kfsSL "$BIOS_URL")"; then
+  if ! bios_manifest="$(curl -fsSL "$BIOS_URL")"; then
     record_failure "BIOS manifest" "download failed"
     return 1
   fi
