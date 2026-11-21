@@ -48,7 +48,7 @@ if rel in os.environ.get('FAIL_URLS', '').split(','):
 ''')
         fake.chmod(0o755)
         self.env = dict(os.environ, HOME=str(self.home), PATH=str(self.bin) + ':' + os.environ['PATH'],
-                        PAYLOAD=str(self.payload), MISTER_SIMP_LOG_FILE=str(self.log),
+                        PAYLOAD=str(self.payload), MISTER_TIDY_LOG_FILE=str(self.log),
                         DIST_URL=(self.payload / 'dist.json').as_uri(),
                         BIOS_URL=(self.payload / 'bios.json').as_uri(),
                         SCRIPTS_URL=(self.payload / 'scripts').as_uri())

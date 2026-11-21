@@ -22,7 +22,7 @@ class LaunchDelete(unittest.TestCase):
         self.mgl = self.base / 'last.mgl'
         self.command = self.base / 'command'
         self.env = dict(os.environ, CACHE_FILE=str(self.cache), MGL_FILE=str(self.mgl),
-                        MISTER_CMD=str(self.command), MISTER_SIMP_LOG_FILE=str(self.base / 'log'))
+                        MISTER_CMD=str(self.command), MISTER_TIDY_LOG_FILE=str(self.base / 'log'))
 
     def run_script(self, name):
         return subprocess.run([BASH, str(SCRIPTS / name), str(self.card)],

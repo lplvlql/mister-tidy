@@ -17,7 +17,7 @@ if [[ "$ROOT_DIR" == / || "$ROOT_DIR" == "$HOME_PATH" ||
 fi
 SCRIPTS_ROOT="${ROOT_DIR}/scripts"
 script_name="${0##*/}"
-REPO_BASE_URL="${REPO_BASE_URL:-https://raw.githubusercontent.com/lplvlql/mister-simp/refs/heads/main}"
+REPO_BASE_URL="${REPO_BASE_URL:-https://raw.githubusercontent.com/lplvlql/mister-tidy/refs/heads/main}"
 LOG_FILE="${SCRIPTS_ROOT}/.log"
 
 ROOT_FILES=(
@@ -90,7 +90,7 @@ ensure_bootstrap_scripts() {
 
 main() {
   mkdir -p "$SCRIPTS_ROOT"
-  export MISTER_SIMP_LOG_FILE="$LOG_FILE"
+  export MISTER_TIDY_LOG_FILE="$LOG_FILE"
   mkdir -p "${LOG_FILE%/*}"
   exec 2>>"$LOG_FILE"
   run_stamp="$(date '+%Y-%m-%d %H:%M:%S')"

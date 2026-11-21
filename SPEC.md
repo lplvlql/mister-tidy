@@ -1,4 +1,4 @@
-# MiSTer Simplified Layout
+# Mister Tidy Layout
 
 ## Goal
 
@@ -6,7 +6,7 @@ Convert a standard MiSTer SD card into the simplified layout used by this repo.
 
 ## Entry Point
 
-- `mister-simp.sh` is the only file the user needs to download at first
+- `mister-tidy.sh` is the only file the user needs to download at first
 - It runs from `scripts/` on MiSTer
 - With no argument, it targets `/media/fat`
 - With a target argument, it can run against a local path

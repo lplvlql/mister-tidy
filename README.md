@@ -1,4 +1,4 @@
-# mister_simp
+# Mister Tidy
 
 One script that migrates a standard MiSTer card layout into the simplified layout used by this repo.
 
@@ -12,7 +12,7 @@ One script that migrates a standard MiSTer card layout into the simplified layou
 
 ## How to use it
 
-- On MiSTer, run `mister-simp.sh` from `scripts/`
+- On MiSTer, run `mister-tidy.sh` from `scripts/`
 - With no argument, it targets `/media/fat`
 - With a target path, it runs on that path instead
 

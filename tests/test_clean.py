@@ -21,7 +21,7 @@ class CleanSafety(unittest.TestCase):
         self.home = self.base / 'home'
         self.home.mkdir()
         self.env = dict(os.environ, HOME=str(self.home),
-                        MISTER_SIMP_LOG_FILE=str(self.base / 'audit.log'))
+                        MISTER_TIDY_LOG_FILE=str(self.base / 'audit.log'))
 
     def run_clean(self, target):
         return subprocess.run([BASH, str(SCRIPT), str(target)],

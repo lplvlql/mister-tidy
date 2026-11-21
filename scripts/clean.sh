@@ -13,7 +13,7 @@ if [[ "$ROOT_PATH" == / || "$ROOT_PATH" == "$HOME_PATH" ||
   exit 1
 fi
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-LOG_FILE="${MISTER_SIMP_LOG_FILE:-${SCRIPT_DIR}/.log}"
+LOG_FILE="${MISTER_TIDY_LOG_FILE:-${SCRIPT_DIR}/.log}"
 
 mkdir -p "${LOG_FILE%/*}"
 exec 2>>"$LOG_FILE"
@@ -57,7 +57,7 @@ ROOT_DIRS=(
 )
 
 SCRIPTS_FILES=(
-  "mister-simp.sh"
+  "mister-tidy.sh"
   "cache.sh"
   "clean.sh"
   "delete.sh"

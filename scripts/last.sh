@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="${1:-${ROOT:-/media/fat}}"
 GAMES_ROOT="${GAMES_ROOT:-${ROOT%/}/games}"
 MGL_FILE="${MGL_FILE:-${SCRIPT_DIR}/.mgl}"
-LOG_FILE="${MISTER_SIMP_LOG_FILE:-${SCRIPT_DIR}/.log}"
+LOG_FILE="${MISTER_TIDY_LOG_FILE:-${SCRIPT_DIR}/.log}"
 MISTER_CMD="${MISTER_CMD:-/dev/MiSTer_cmd}"
 
 mkdir -p "${LOG_FILE%/*}"

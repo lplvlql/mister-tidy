@@ -19,7 +19,7 @@ class CacheSafety(unittest.TestCase):
         self.cache = self.base / 'cache'
         self.cache.write_text('NES/previous.nes\tNES\n')
         self.env = dict(os.environ, CACHE_FILE=str(self.cache),
-                        MISTER_SIMP_LOG_FILE=str(self.base / 'log'))
+                        MISTER_TIDY_LOG_FILE=str(self.base / 'log'))
 
     def run_cache(self):
         return subprocess.run([BASH, str(SCRIPT), str(self.card)],

@@ -14,7 +14,7 @@ if [[ "$ROOT" == / || "$ROOT" == "$HOME_PATH" ||
   exit 1
 fi
 SCRIPTS_ROOT="${ROOT%/}/scripts"
-LOG_FILE="${MISTER_SIMP_LOG_FILE:-${SCRIPT_DIR}/.log}"
+LOG_FILE="${MISTER_TIDY_LOG_FILE:-${SCRIPT_DIR}/.log}"
 MANIFEST_FILE="${MANIFEST_FILE:-${SCRIPTS_ROOT}/.manifest}"
 
 mkdir -p "${LOG_FILE%/*}"
@@ -22,7 +22,7 @@ exec 2>>"$LOG_FILE"
 
 DIST_URL="${DIST_URL:-https://raw.githubusercontent.com/MiSTer-devel/Distribution_MiSTer/main/db.json.zip}"
 BIOS_URL="${BIOS_URL:-https://raw.githubusercontent.com/ajgowans/BiosDB_MiSTer/db/bios_db.json}"
-SCRIPTS_URL="${SCRIPTS_URL:-https://raw.githubusercontent.com/lplvlql/mister-simp/refs/heads/main/scripts}"
+SCRIPTS_URL="${SCRIPTS_URL:-https://raw.githubusercontent.com/lplvlql/mister-tidy/refs/heads/main/scripts}"
 
 GAME_DIRS=(
   GBA
