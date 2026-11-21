@@ -1,0 +1,4 @@
+.*
+!/.gitignore
+!/scripts/.clean.sh
+!/scripts/.cache.sh

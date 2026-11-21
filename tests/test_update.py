@@ -66,7 +66,7 @@ if rel in os.environ.get('FAIL_URLS', '').split(','):
             'base_files_url': self.payload.as_uri() + '/', 'files': files}))
 
     def scripts(self):
-        for name in ('clean.sh', 'cache.sh', 'delete.sh', 'last.sh', 'random.sh', 'update.sh'):
+        for name in ('.clean.sh', '.cache.sh', 'delete.sh', 'repeat.sh', 'shuffle.sh', 'update.sh'):
             dest = self.payload / 'scripts' / name
             dest.parent.mkdir(exist_ok=True)
             dest.write_text('#!/bin/bash\n# fixture\n')
@@ -74,6 +74,22 @@ if rel in os.environ.get('FAIL_URLS', '').split(','):
     def run_update(self):
         return subprocess.run([BASH, str(SCRIPT), str(self.card)],
                               env=self.env, capture_output=True, text=True)
+
+    def test_update_hides_helpers_and_removes_legacy_scripts(self):
+        self.manifest('dist.json', {})
+        self.manifest('bios.json', {})
+        self.scripts()
+        scripts = self.card / 'scripts'
+        scripts.mkdir()
+        for name in ('clean.sh', 'cache.sh', 'random.sh', 'last.sh'):
+            (scripts / name).write_text('legacy helper')
+        (self.payload / 'scripts/.cache.sh').write_text(
+            '#!/bin/bash\nprintf refreshed > "$1/scripts/.cache"\n')
+        result = self.run_update()
+        self.assertEqual(result.returncode, 0, self.log.read_text())
+        self.assertEqual({path.name for path in scripts.iterdir() if not path.name.startswith('.')},
+                         {'update.sh', 'shuffle.sh', 'repeat.sh', 'delete.sh'})
+        self.assertEqual((scripts / '.cache').read_text(), 'refreshed')
 
     def test_invalid_update_targets_refuse_before_writes_or_downloads(self):
         wrong = self.base / 'wrong'
@@ -108,9 +124,9 @@ if rel in os.environ.get('FAIL_URLS', '').split(','):
         bios['files']['games/NES/rawbios']['hash'] = ''
         (self.payload / 'bios.json').write_text(json.dumps(bios))
         self.scripts()
-        self.env['FAIL_URLS'] = 'linux/test,_Console/NES_20261016.rbf,games/NES/rawbios,scripts/clean.sh'
+        self.env['FAIL_URLS'] = 'linux/test,_Console/NES_20261016.rbf,games/NES/rawbios,scripts/.clean.sh'
         for name in ('MiSTer', 'linux/test', 'NES_20261016.rbf', 'games/NES/support',
-                     'games/NES/hashbios', 'scripts/clean.sh'):
+                     'games/NES/hashbios', 'scripts/.clean.sh'):
             dest = self.card / name
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(b'original')
@@ -122,7 +138,7 @@ if rel in os.environ.get('FAIL_URLS', '').split(','):
                              ('games/NES/support', 'checksum mismatch'),
                              ('games/NES/hashbios', 'checksum mismatch'),
                              ('games/NES/rawbios', 'download failed'),
-                             ('scripts/clean.sh', 'download failed')]:
+                             ('scripts/.clean.sh', 'download failed')]:
             self.assertIn(f'failed: {name} ({reason})', log)
             self.assertNotIn(f'unchanged: {name}\n', log)
             self.assertNotIn(f'copied: {name}\n', log)

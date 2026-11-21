@@ -29,13 +29,13 @@ The installer normalizes folder names, installs the helpers, updates the card, a
 
 The two core files are examples. See the [layout specification](SPEC.md) for the full rules.
 
-## Helper scripts
+## Scripts menu
 
 | Script | Action |
 | --- | --- |
-| `clean.sh` | Normalize names and prune the card |
-| `update.sh` | Sync cores, game data, BIOS files, and helpers |
-| `cache.sh` | Build the random-game cache |
-| `random.sh` | Launch a random cached game |
-| `last.sh` | Relaunch the last generated selection |
+| `update.sh` | Update the card and refresh the game cache |
+| `shuffle.sh` | Launch a random game without repeating a pick until the pool is exhausted |
+| `repeat.sh` | Relaunch the last selection |
 | `delete.sh` | Delete the selected game and clear its launch file |
+
+To upgrade an older installation, run the current `mister-tidy.sh` once.

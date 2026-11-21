@@ -5,7 +5,7 @@ import subprocess
 import tempfile
 import unittest
 
-SCRIPT = Path(__file__).resolve().parents[1] / 'scripts/cache.sh'
+SCRIPT = Path(__file__).resolve().parents[1] / 'scripts/.cache.sh'
 BASH = os.environ.get('MISTER_TEST_BASH', '/bin/bash')
 
 

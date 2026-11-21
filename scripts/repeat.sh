@@ -17,7 +17,7 @@ stage() {
 	printf 'stage: %s\n' "$1" >>"$LOG_FILE"
 }
 
-stage 'last'
+stage 'repeat'
 
 if [[ ! -f "$MGL_FILE" ]]; then
 	echo "No saved MGL found at ${MGL_FILE}" >&2

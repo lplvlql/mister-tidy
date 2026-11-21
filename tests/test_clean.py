@@ -6,7 +6,7 @@ import tempfile
 import unittest
 
 BASH = os.environ.get('MISTER_TEST_BASH', '/bin/bash')
-SCRIPT = Path(__file__).resolve().parents[1] / 'scripts/clean.sh'
+SCRIPT = Path(__file__).resolve().parents[1] / 'scripts/.clean.sh'
 
 
 class CleanSafety(unittest.TestCase):

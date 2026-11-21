@@ -6,6 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="${1:-${ROOT:-/media/fat}}"
 GAMES_ROOT="${GAMES_ROOT:-${ROOT%/}/games}"
 CACHE_FILE="${CACHE_FILE:-${SCRIPT_DIR}/.cache}"
+SHUFFLE_FILE="${SHUFFLE_FILE:-${SCRIPT_DIR}/.shuffle}"
 MGL_FILE="${MGL_FILE:-${SCRIPT_DIR}/.mgl}"
 LOG_FILE="${MISTER_TIDY_LOG_FILE:-${SCRIPT_DIR}/.log}"
 MISTER_CMD="${MISTER_CMD:-/dev/MiSTer_cmd}"
@@ -18,7 +19,7 @@ stage() {
 	printf 'stage: %s\n' "$1" >>"$LOG_FILE"
 }
 
-stage 'random'
+stage 'shuffle'
 
 params_for_file() {
 	local rel="$1"
@@ -119,16 +120,42 @@ if [[ ! -s "$CACHE_FILE" ]]; then
 	exit 1
 fi
 
-declare -a games=()
-while IFS= read -r line; do
+if [[ -e "$SHUFFLE_FILE" || -L "$SHUFFLE_FILE" ]]; then
+	[[ -f "$SHUFFLE_FILE" && ! -L "$SHUFFLE_FILE" ]] || {
+		echo "Invalid shuffle history: $SHUFFLE_FILE" >&2
+		exit 1
+	}
+	history="$SHUFFLE_FILE"
+else
+	history=/dev/null
+fi
+
+# Mark played paths before checking which cached games still exist.
+entries="$(awk -F '\t' '
+	FILENAME == ARGV[1] { played[$0] = 1; next }
+	{ print (($1 in played) ? "1" : "0") $0 }
+' "$history" "$CACHE_FILE")" || exit 1
+
+declare -a games=() remaining=()
+while IFS= read -r entry; do
+	line="${entry:1}"
 	rel="${line%%$'\t'*}"
 	[[ -f "${GAMES_ROOT%/}/$rel" ]] || continue
 	games+=("$line")
-done < "$CACHE_FILE"
+	if [[ "${entry:0:1}" == 0 ]]; then
+		remaining+=("$line")
+	fi
+done <<< "$entries"
 
 if (( ${#games[@]} == 0 )); then
 	echo "No launchable games found under $GAMES_ROOT" >&2
 	exit 1
+fi
+
+if (( ${#remaining[@]} > 0 )); then
+	games=("${remaining[@]}")
+else
+	history=/dev/null
 fi
 
 index="$(random_index "${#games[@]}")" || exit 1
@@ -138,6 +165,14 @@ core="${choice#*$'\t'}"
 
 printf 'picked: %s\n' "$rel" >>"$LOG_FILE"
 
+history_tmp="$(mktemp "${SHUFFLE_FILE}.tmp.XXXXXX")"
+trap 'rm -f -- "$history_tmp"' EXIT
+if [[ "$history" != /dev/null ]]; then
+	cat -- "$history" > "$history_tmp"
+fi
+printf '%s\n' "$rel" >> "$history_tmp"
+
 mgl="$(build_mgl "$core" "$rel")" || exit 1
 printf 'load_core %s\n' "$mgl" > "$MISTER_CMD"
+mv -f -- "$history_tmp" "$SHUFFLE_FILE"
 printf 'done\n'

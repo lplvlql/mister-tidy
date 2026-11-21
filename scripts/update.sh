@@ -83,11 +83,11 @@ ROOT_FILES=(
 )
 
 SCRIPTS_FILES=(
-  clean.sh
-  cache.sh
+  .clean.sh
+  .cache.sh
   delete.sh
-  last.sh
-  random.sh
+  repeat.sh
+  shuffle.sh
   update.sh
 )
 
@@ -429,6 +429,10 @@ main() {
     done_line "update failed: $FAILURES failure(s)"
     return 1
   fi
+  stage cache
+  MISTER_TIDY_LOG_FILE="$LOG_FILE" "$SCRIPTS_ROOT/.cache.sh" "$ROOT"
+  rm -f -- "$SCRIPTS_ROOT/clean.sh" "$SCRIPTS_ROOT/cache.sh" \
+    "$SCRIPTS_ROOT/random.sh" "$SCRIPTS_ROOT/last.sh"
 }
 
 main
