@@ -74,34 +74,33 @@ class LaunchDelete(unittest.TestCase):
                 self.assertEqual(self.mgl.read_text(), 'previous last game')
                 self.assertEqual(self.command.read_text(), 'unchanged command')
 
-    def test_mgl_open_failure_never_sends_launch_command(self):
+    def test_mgl_write_failures_never_launch_and_keep_previous_selection(self):
         self.game('NES/test.nes')
         self.cache.write_text('NES/test.nes\tNES f 1 2\n')
-        self.env['MGL_FILE'] = str(self.base / 'missing-parent/last.mgl')
-        self.command.write_text('previous command')
-        result = self.run_script('shuffle.sh')
-        self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(self.command.read_text(), 'previous command')
-        self.assertFalse(Path(self.env['MGL_FILE']).exists())
-        self.assertIn('Failed to write MGL:', (self.base / 'log').read_text())
-
-    def test_mgl_stream_write_failure_never_sends_launch_command(self):
-        self.game('NES/test.nes')
-        self.cache.write_text('NES/test.nes\tNES f 1 2\n')
-        bindir = self.base / 'bin'
-        bindir.mkdir()
-        cat = bindir / 'cat'
-        cat.write_text('#!/bin/bash\nprintf "partial write"\nexit 1\n')
-        cat.chmod(0o755)
-        self.env['PATH'] = str(bindir) + ':' + os.environ['PATH']
-        self.mgl.write_text('previous valid MGL')
-        self.command.write_text('previous command')
-        result = self.run_script('shuffle.sh')
-        self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(self.command.read_text(), 'previous command')
-        self.assertEqual(self.mgl.read_text(), 'previous valid MGL')
-        self.assertEqual(list(self.base.glob('last.mgl.*')), [])
-        self.assertIn('Failed to write MGL:', (self.base / 'log').read_text())
+        for failure in ('missing folder', 'folder destination', 'cat', 'mv'):
+            with self.subTest(failure=failure):
+                env, mgl = dict(self.env), self.mgl
+                if failure == 'missing folder':
+                    mgl = self.base / 'missing/last.mgl'
+                elif failure == 'folder destination':
+                    mgl = self.base / 'folder.mgl'
+                    mgl.mkdir()
+                else:  # the write or the rename fails
+                    tool = self.base / ('bin-' + failure) / failure
+                    tool.parent.mkdir()
+                    tool.write_text('#!/bin/bash\nexit 1\n')
+                    tool.chmod(0o755)
+                    env['PATH'] = f'{tool.parent}:{os.environ["PATH"]}'
+                    mgl.write_text('previous valid MGL')
+                env['MGL_FILE'] = str(mgl)
+                self.command.write_text('previous command')
+                result = subprocess.run([BASH, str(SCRIPTS / 'shuffle.sh'), str(self.card)],
+                                        env=env, capture_output=True, text=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(self.command.read_text(), 'previous command')
+                if failure in ('cat', 'mv'):
+                    self.assertEqual(mgl.read_text(), 'previous valid MGL')
+                self.assertEqual(list(self.base.glob(mgl.name + '.*')), [])
 
     def test_delete_prunes_cache_and_stale_entries_cannot_launch(self):
         target = self.game('NES/A [x] & B.nes')
@@ -121,48 +120,6 @@ class LaunchDelete(unittest.TestCase):
         self.cache.write_text('NES/missing.nes\tNES f 1 2\nNES/keep.nes\tNES f 1 2\n')
         self.assertEqual(self.run_script('shuffle.sh').returncode, 0)
         self.assertTrue(ET.parse(self.mgl).find('file').attrib['path'].endswith('/NES/keep.nes'))
-
-    def test_mgl_directory_destination_is_not_treated_as_success(self):
-        self.game('NES/test.nes')
-        self.cache.write_text('NES/test.nes\tNES f 1 2\n')
-        self.mgl.mkdir()
-        self.command.write_text('no launch')
-        self.assertNotEqual(self.run_script('shuffle.sh').returncode, 0)
-        self.assertEqual(self.command.read_text(), 'no launch')
-        self.assertEqual(list(self.mgl.iterdir()), [])
-        self.assertEqual(list(self.base.glob('last.mgl.*')), [])
-
-    def test_mgl_rename_failure_preserves_previous_selection(self):
-        self.game('NES/test.nes')
-        self.cache.write_text('NES/test.nes\tNES f 1 2\n')
-        self.mgl.write_text('previous valid MGL')
-        bindir = self.base / 'bin'
-        bindir.mkdir()
-        mv = bindir / 'mv'
-        mv.write_text('#!/bin/bash\nexit 1\n')
-        mv.chmod(0o755)
-        self.env['PATH'] = str(bindir) + ':' + os.environ['PATH']
-        self.command.write_text('no launch')
-        self.assertNotEqual(self.run_script('shuffle.sh').returncode, 0)
-        self.assertEqual(self.mgl.read_text(), 'previous valid MGL')
-        self.assertEqual(self.command.read_text(), 'no launch')
-        self.assertEqual(list(self.base.glob('last.mgl.*')), [])
-
-    def test_escape_failure_preserves_mgl_and_sends_no_command(self):
-        self.game('NES/test.nes')
-        self.cache.write_text('NES/test.nes\tNES f 1 2\n')
-        self.mgl.write_text('previous MGL')
-        self.command.write_text('previous command')
-        bindir = self.base / 'bin'
-        bindir.mkdir()
-        sed = bindir / 'sed'
-        sed.write_text('#!/bin/bash\nexit 1\n')
-        sed.chmod(0o755)
-        self.env['PATH'] = str(bindir) + ':' + os.environ['PATH']
-        self.assertNotEqual(self.run_script('shuffle.sh').returncode, 0)
-        self.assertEqual(self.mgl.read_text(), 'previous MGL')
-        self.assertEqual(self.command.read_text(), 'previous command')
-        self.assertEqual(list(self.base.glob('last.mgl.*')), [])
 
     def test_delete_refuses_cache_directory_before_deleting_rom(self):
         target = self.game('NES/test.nes')

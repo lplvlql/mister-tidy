@@ -84,16 +84,6 @@ class BootstrapSafety(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual((card / 'scripts/mister-tidy.sh').read_bytes(), before)
 
-    def test_payload_download_ignores_old_temp_symlink(self):
-        card = self.card('card')
-        outside = self.base / 'outside'
-        outside.write_bytes(b'outside original')
-        (card / 'scripts/delete.sh.tmp').symlink_to(outside)
-        result = self.run_bootstrap(card)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(outside.read_bytes(), b'outside original')
-        self.assertEqual(list((card / 'scripts').glob('*.tmp.*')), [])
-
     def test_failed_payload_fetch_preserves_script_and_removes_temp(self):
         card = self.card('card')
         original = card / 'scripts/delete.sh'

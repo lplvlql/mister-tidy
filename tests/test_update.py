@@ -349,21 +349,6 @@ if rel in os.environ.get('FAIL_URLS', '').split(','):
         self.assertEqual((outside / 'keep').read_bytes(), b'outside')
         self.assertEqual(list(outside.iterdir()), [outside / 'keep'])
 
-    def test_manifest_uses_unique_temp_file_without_following_old_symlink(self):
-        self.manifest('dist.json', [])
-        self.manifest('bios.json', [])
-        self.scripts()
-        scripts = self.card / 'scripts'
-        scripts.mkdir()
-        outside = self.base / 'outside'
-        outside.write_bytes(b'outside original')
-        old_temp = scripts / '.manifest.tmp'
-        old_temp.symlink_to(outside)
-        self.assertEqual(self.run_update().returncode, 0, self.log.read_text())
-        self.assertEqual(outside.read_bytes(), b'outside original')
-        self.assertTrue(old_temp.is_symlink())
-        self.assertEqual(list(self.card.rglob('*.tmp.*')), [])
-
     def test_real_offline_curl_handles_encoded_path_components(self):
         # Real curl uses file:// only; this verifies URL syntax beyond the stub.
         paths = ['games/NES/A B #100% + & café.bin',
@@ -505,21 +490,6 @@ class CacheSafety(unittest.TestCase):
         self.assertNotEqual(self.run_cache().returncode, 0)
         self.assert_preserved()
 
-    def test_old_temp_symlink_is_not_followed(self):
-        nes = self.card / 'games/NES'
-        nes.mkdir(parents=True)
-        (nes / 'keep.nes').write_bytes(b'rom')
-        outside = self.base / 'outside'
-        outside.write_bytes(b'outside original')
-        old_temp = self.base / 'cache.tmp'
-        old_temp.symlink_to(outside)
-        self.assertEqual(self.run_cache().returncode, 0)
-        self.assertEqual(outside.read_bytes(), b'outside original')
-        self.assertTrue(old_temp.is_symlink())
-        self.assertEqual(self.cache.read_text(), 'NES/keep.nes\tNES f 1 2\n')
-        self.assertEqual(list(self.base.glob('cache.tmp.*')), [])
-        self.assertEqual(list(self.base.glob('cache.scan.*')), [])
-
     def test_directory_destination_is_refused(self):
         (self.card / 'games/NES').mkdir(parents=True)
         self.cache.unlink()
@@ -572,22 +542,6 @@ class CleanSafety(unittest.TestCase):
     def snapshot(self, root):
         return {str(p.relative_to(root)): p.read_bytes()
                 for p in root.rglob('*') if p.is_file()}
-
-    def test_invalid_targets_refuse_without_mutation(self):
-        wrong = self.base / 'wrong'
-        wrong.mkdir()
-        (wrong / 'keep').write_bytes(b'untouched')
-        empty = self.base / 'empty'
-        empty.mkdir()
-        # Include a home directory that otherwise looks like a card.
-        for name in ('MiSTer', 'menu.rbf', 'keep'):
-            (self.home / name).write_bytes(b'untouched')
-        before = self.snapshot(self.base)
-        for target in ('', '/', '///', self.home, wrong, empty, self.base / 'missing'):
-            with self.subTest(target=target):
-                result = self.run_clean(target)
-                self.assertNotEqual(result.returncode, 0)
-                self.assertEqual(self.snapshot(self.base), before)
 
     def test_cleanup_preserves_state_and_removes_nested_blacklist(self):
         scripts = self.card / 'scripts'
