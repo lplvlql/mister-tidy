@@ -164,6 +164,22 @@ if rel in os.environ.get('FAIL_URLS', '').split(','):
         self.assertNotIn('failed:', log)
         self.assertEqual(list(self.card.rglob('*.tmp.*')), [])
 
+    def test_newer_core_replaces_older_dated_versions(self):
+        (self.card / 'NES_20260101.rbf').write_bytes(b'old')
+        (self.card / 'NES_20260601.rbf').write_bytes(b'older')
+        (self.card / 'SNES_20260101.rbf').write_bytes(b'other family')
+        self.manifest('dist.json', ['_Console/NES_20261016.rbf'])
+        self.manifest('bios.json', [])
+        self.scripts()
+        result = self.run_update()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(sorted(p.name for p in self.card.glob('NES_*.rbf')), ['NES_20261016.rbf'])
+        self.assertTrue((self.card / 'SNES_20260101.rbf').exists())
+        self.env['FAIL_URLS'] = '_Console/NES_20261101.rbf'
+        self.manifest('dist.json', ['_Console/NES_20261101.rbf'])
+        self.run_update()
+        self.assertTrue((self.card / 'NES_20261016.rbf').exists())
+
     def test_removed_platforms_are_not_synced(self):
         self.manifest('dist.json', ['_Console/S32X_20261016.rbf',
                                    'games/S32X/support', 'games/NeoGeoPocket/support', 'games/SMS/game.GG',

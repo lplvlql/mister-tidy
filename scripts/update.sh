@@ -292,7 +292,7 @@ sync_linux() {
 }
 
 sync_cores() {
-  local manifest="$1" base_url family key rel name hash best_date best_key best_hash best_url url
+  local manifest="$1" base_url family key rel name hash best_date best_key best_hash best_url url old
   base_url="$(manifest_base_url "$manifest")"
   for family in "${CORE_NAMES[@]}"; do
     best_date=""
@@ -320,7 +320,12 @@ sync_cores() {
     name="${name##*/}"
     status "$name"
     printf 'core match: %s -> %s\n' "$best_key" "$ROOT/$name" >>"$LOG_FILE"
-    sync_download "$name" "$best_url" "$ROOT/$name" "$best_hash" || :
+    # Once the newest core is in place, drop the older dated versions it replaces.
+    sync_download "$name" "$best_url" "$ROOT/$name" "$best_hash" || [[ $? -eq 1 ]] || continue
+    for old in "$ROOT/${family}"_*.rbf; do
+      [[ -f "$old" && "${old##*/}" != "$name" ]] || continue
+      rm -f -- "$old" && done_line "removed: ${old##*/}"
+    done
   done
 }
 
