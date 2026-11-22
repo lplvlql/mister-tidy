@@ -145,7 +145,7 @@ class Update(Card):
             self.assertFalse((self.card / name).is_symlink(), name)
         self.assertEqual(self.outside.read_text(), 'outside')
         before = self.tree(self.card)
-        self.assertNotRegex(self.update(), 'updated|removed|failed')
+        self.assertEqual(self.update(), 'updating\ndone\n')
         self.assertEqual(self.tree(self.card), before)
 
     def test_sync_installs_wanted_files_only(self):
@@ -237,7 +237,7 @@ exit $rc
         self.manifests(files, ['games/NES/boot0.rom'])
         detail = self.update(ok=False)
         for path in paths:
-            self.assertIn('unsafe destination: ' + path, detail)
+            self.assertIn(f'failed: {path} (unsafe path)', detail)
         self.assertEqual(save.read_text(), 'save')
         self.assertEqual(self.outside.read_text(), 'outside')
 
@@ -255,7 +255,7 @@ exit $rc
                         self.write(self.remote / 'bios.json', text)
                     for name in ('.cache', 'update.sh'):
                         (self.card / 'scripts' / name).unlink(missing_ok=True)
-                    self.assertIn('failed: manifests', self.update(ok=False))
+                    self.assertIn('failed: file lists', self.update(ok=False))
                     self.assertEqual((self.card / 'MiSTer').read_text(), 'old')
                     self.assertTrue((self.card / 'scripts/update.sh').exists())
                     self.assertEqual((self.card / 'scripts/.cache').read_text(), 'NES/a.nes\tNES f 1 2\n')

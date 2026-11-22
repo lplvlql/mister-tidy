@@ -15,7 +15,7 @@ pick() {
     BEGIN { srand(seed) }
     FILENAME == ARGV[1] { played[$0]; next }
     !($1 in played) { printf "%.9f\t%s\n", rand(), $0 }
-  ' "$1" .cache | sort -n)
+  ' "$1" .cache | sort -n 2>/dev/null)
   return 1
 }
 

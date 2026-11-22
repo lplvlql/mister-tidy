@@ -70,10 +70,6 @@ done
 CACHE_FILE="$ROOT/scripts/.cache"
 FAILURES=0
 
-stage() {
-  echo "==> $1"
-}
-
 remove() {
   rm -rf -- "$1"
   echo "removed: ${1#"$ROOT"/}"
@@ -93,14 +89,16 @@ prune() {
 }
 
 clean_card() {
-  local dir banned
+  local dir entry banned
   for dir in "${ROOT_DIRS[@]}" "${GAME_DIRS[@]/#/games/}"; do
     mkdir -p "$ROOT/$dir"
   done
   prune "$ROOT" MiSTer menu.rbf 'MiSTer*.ini' "${CORE_NAMES[@]/%/_*.rbf}" "${ROOT_DIRS[@]}"
   prune "$ROOT/games" "${GAME_DIRS[@]}"
   prune "$ROOT/scripts" "${SCRIPTS_FILES[@]}" "${SCRIPTS_STATE[@]}"
-  find "$ROOT/games/SMS" -type f -iname '*.gg' -print -exec rm -f {} +
+  find "$ROOT/games/SMS" -type f -iname '*.gg' | while IFS= read -r entry; do
+    remove "$entry"
+  done
   for banned in "${GAME_BLACKLIST[@]}"; do
     [[ ! -e "$ROOT/games/$banned" ]] || remove "$ROOT/games/$banned"
   done
@@ -135,7 +133,7 @@ install_file() {
 sync_file() {
   local rel="$1" dest="$ROOT/$1" tmp=""
   if ! safe_destination "$rel"; then
-    echo "unsafe destination: $rel"
+    rel="$rel (unsafe path)"
   elif (( $# == 3 )) && [[ -f "$dest" ]] && md5_matches "$dest" "$3"; then
     return 0
   # MiSTer Linux ships no CA bundle, so downloads are not authenticated.
@@ -233,27 +231,21 @@ build_cache() {
 
 main() {
   local dist bios
-  stage tidy
+  echo 'updating'
   clean_card
   # Neither of these depends on the manifests, so a bad one cannot block them.
-  stage scripts
   sync_scripts
-  stage cache
   build_cache
-  stage manifests
   zip="$(mktemp)"
   trap 'rm -f -- "$zip"' EXIT
   if ! curl -kfsSL "$DIST_URL" -o "$zip" ||
      ! dist="$(unzip -p "$zip" | read_manifest)" ||
      ! bios="$(curl -kfsSL "$BIOS_URL" | read_manifest)"; then
-    echo 'failed: manifests'
+    echo 'failed: file lists'
     return 1
   fi
-  stage system
   sync_system "$dist"
-  stage cores
   sync_cores "$dist"
-  stage games
   sync_games "$dist"
   sync_games "$bios"
   (( FAILURES == 0 )) || { echo "$FAILURES failed"; return 1; }

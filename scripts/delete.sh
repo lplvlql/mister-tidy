@@ -12,7 +12,7 @@ file="$(sed -n 's/.*path="\([^"]*\)".*/\1/p' .mgl |
 
 # Resolve folders first: a text prefix alone accepts ../ and symlinked folders.
 games="$(cd ../games && pwd -P)"
-folder="$(cd -- "$(dirname -- "$file")" && pwd -P)"
+folder="$(cd -- "$(dirname -- "$file")" 2>/dev/null && pwd -P || :)"
 if [[ "$folder/" != "$games/"* || -L "$file" || ! -f "$file" ]]; then
   echo "not a game on this card: $file" >&2
   exit 1
