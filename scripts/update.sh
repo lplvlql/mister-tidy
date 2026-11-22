@@ -69,6 +69,7 @@ done
 
 CACHE_FILE="$ROOT/scripts/.cache"
 FAILURES=0
+UPDATED=""
 
 remove() {
   rm -rf -- "$1"
@@ -126,7 +127,9 @@ md5_matches() {
 install_file() {
   local dest="$ROOT/$2"
   cmp -s "$1" "$dest" && return
-  chmod 755 "$1" && mkdir -p "${dest%/*}" && mv -f "$1" "$dest" && echo "updated: $2"
+  chmod 755 "$1" && mkdir -p "${dest%/*}" && mv -f "$1" "$dest" || return
+  UPDATED="$2"
+  echo "updated: $2"
 }
 
 # sync_file path url [md5]: manifest files must match their MD5, scripts must parse.
@@ -160,6 +163,9 @@ sync_scripts() {
   local name
   for name in "${SCRIPTS_FILES[@]}"; do
     sync_file "scripts/$name" "$SCRIPTS_URL/$name" || :
+    # A new update.sh takes over, at most once per run.
+    [[ "$UPDATED" != scripts/update.sh || -n "${HANDED_OVER:-}" ]] ||
+      HANDED_OVER=1 exec "$BASH" "$ROOT/$UPDATED" "$ROOT"
   done
 }
 
@@ -231,10 +237,10 @@ build_cache() {
 
 main() {
   local dist bios
+  # Scripts and cache do not depend on the manifests, so a bad one cannot block them.
+  sync_scripts
   echo 'updating'
   clean_card
-  # Neither of these depends on the manifests, so a bad one cannot block them.
-  sync_scripts
   build_cache
   zip="$(mktemp)"
   trap 'rm -f -- "$zip"' EXIT

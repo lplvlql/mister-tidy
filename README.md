@@ -39,6 +39,6 @@ Downloads are not authenticated, because MiSTer Linux has no CA bundle. Cores, s
 
 Supported core families: `GBA`, `Gameboy`, `MegaCD`, `MegaDrive`, `N64`, `NES`, `NeoGeo`, `PSX`, `Saturn`, `SMS`, `SNES`, `TurboGrafx16`. Each has a `games/` folder of the same name, except `NeoGeo` also uses `NeoGeo-CD/` and `TurboGrafx16` uses `TGFX16/` and `TGFX16-CD/`. `NES/` also holds FDS games; `SMS/` holds SMS games only.
 
-`update.sh` first removes everything outside this layout, then Game Gear ROMs in `SMS/` and the unused `gog-*` lists in `NeoGeo/`. Names match in any case. It then updates the scripts, rebuilds the game cache and syncs `MiSTer`, `menu.rbf`, Linux support files, the newest core of each family (removing every other version), game data and BIOS files. Game data and BIOS files that differ from the manifests are replaced. `saves/` and `savestates/` are never touched.
+`update.sh` first updates the scripts, switching to its own new version if there is one. It removes everything outside this layout, then Game Gear ROMs in `SMS/` and the unused `gog-*` lists in `NeoGeo/`. Names match in any case. It then rebuilds the game cache and syncs `MiSTer`, `menu.rbf`, Linux support files, the newest core of each family (removing every other version), game data and BIOS files. Game data and BIOS files that differ from the manifests are replaced. `saves/` and `savestates/` are never touched.
 
 The scripts keep their state in `scripts/`: `.cache`, `.shuffle` and `.mgl`.

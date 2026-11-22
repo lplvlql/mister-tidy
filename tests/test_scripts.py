@@ -32,7 +32,8 @@ class Card(unittest.TestCase):
         for path in SOURCE.iterdir():
             text = path.read_text().replace('/dev/MiSTer_cmd', f'"{self.command}"')
             self.write(self.card / 'scripts' / path.name, text)
-            self.write(self.remote / 'scripts' / path.name, f'#!/bin/bash\n# new {path.name}\n')
+            self.write(self.remote / 'scripts' / path.name, text if path.name == 'update.sh'
+                       else f'#!/bin/bash\n# new {path.name}\n')
         self.outside = self.write(self.base / 'outside/keep.nes', 'outside')
         self.env = dict(os.environ, HOME=str(self.base / 'home'),
                         DIST_URL=(self.remote / 'dist.zip').as_uri(),
@@ -72,7 +73,7 @@ class Card(unittest.TestCase):
     def run_script(self, name, *args, ok=True, path=''):
         env = dict(self.env, PATH=path + os.environ['PATH'])
         result = subprocess.run([BASH, str(self.card / 'scripts' / name), *map(str, args)],
-                                env=env, capture_output=True, text=True)
+                                env=env, capture_output=True, text=True, timeout=60)
         detail = result.stdout + result.stderr
         self.assertEqual(result.returncode == 0, ok, detail)
         return detail
@@ -165,11 +166,27 @@ class Update(Card):
         for name in unwanted + ['saves/a']:
             self.assertFalse((self.card / name).exists(), name)
         self.assertEqual(sorted(p.name for p in self.card.glob('*_*.rbf')), sorted(cores))
-        for name in ('update.sh', 'shuffle.sh', 'repeat.sh', 'delete.sh'):
+        for name in ('shuffle.sh', 'repeat.sh', 'delete.sh'):
             script = self.card / 'scripts' / name
             self.assertEqual(script.read_text(), f'#!/bin/bash\n# new {name}\n')
             self.assertTrue(os.access(script, os.X_OK))
         self.assertTrue(os.access(self.card / 'MiSTer', os.X_OK))
+
+    def test_new_updater_does_everything_in_one_run(self):
+        new = (SOURCE / 'update.sh').read_text().replace("'updating'", "'updating v2'")
+        self.write(self.remote / 'scripts/update.sh', new)
+        self.write(self.card / 'junk')
+        output = self.run_script('update.sh').splitlines()
+        self.assertEqual(output[2:5], ['updated: scripts/shuffle.sh', 'updated: scripts/update.sh',
+                                       'updating v2'])
+        self.assertIn('removed: junk', output[5:])
+        self.assertEqual(output[-1], 'done')
+        self.assertTrue(os.access(self.card / 'scripts/update.sh', os.X_OK))
+        self.assertEqual(self.run_script('update.sh'), 'updating v2\ndone\n')
+        # Without a working cmp every copy looks new; it must still finish.
+        fake = self.write(self.base / 'bin/cmp', '#!/bin/bash\nexit 127\n')
+        fake.chmod(0o755)
+        self.assertTrue(self.run_script('update.sh', path=f'{fake.parent}:').endswith('done\n'))
 
     def test_update_killed_at_any_step_recovers(self):
         self.manifests(['MiSTer', 'menu.rbf', '_Console/NES_20261016.rbf'], ['games/NES/boot0.rom'])
