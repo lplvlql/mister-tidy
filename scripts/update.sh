@@ -91,10 +91,6 @@ SCRIPTS_FILES=(
   update.sh
 )
 
-status() {
-  printf 'processing: %s\n' "$1" >>"$LOG_FILE"
-}
-
 done_line() {
   printf '%s\n' "$1" >>"$LOG_FILE"
 }
@@ -104,10 +100,14 @@ stage() {
   printf 'stage: %s\n' "$1" >>"$LOG_FILE"
 }
 
-# One line per file: key, hash, own url (if the manifest gives one), joined by
-# the unit separator so empty fields never collapse.
+# Parse a manifest once into lines of key, hash and download url, joined by the
+# unit separator so empty fields never collapse. A file's own url wins;
+# otherwise the url is the base plus the encoded path.
 read_manifest() {
-  jq -r '.files | to_entries[] | [.key, (.value.hash // ""), (.value.url // "")] | join("\u001f")' <<<"$1"
+  jq -r '(.base_files_url // "") as $base | .files | to_entries[] |
+    [.key, (.value.hash // ""),
+     (.value.url // ($base + (.key | ltrimstr("|") | split("/") | map(@uri) | join("/"))))]
+    | join("\u001f")' <<<"$1"
 }
 
 validate_manifest() {
@@ -123,10 +123,6 @@ validate_manifest() {
   ' <<<"$1" >/dev/null
 }
 
-manifest_base_url() {
-  jq -r '.base_files_url // ""' <<<"$1"
-}
-
 # Download results: 0 copied, 1 hash matched, 2 checksum mismatch,
 # 3 transfer failed, 4 local file operation failed, 5 hash check failed.
 FAILURES=0
@@ -140,7 +136,8 @@ download_with_md5() {
   [[ ! -d "$dest" ]] || return 4
   mkdir -p "$(dirname -- "$dest")" || return 4
   if [[ -n "$hash" && -f "$dest" ]]; then
-    got="$(md5sum "$dest" | awk '{print $1}')" || return 5
+    got="$(md5sum "$dest")" || return 5
+    got="${got%% *}"
     [[ "$got" != "$hash" ]] || return 1
   fi
   if [[ -f "$dest" ]]; then
@@ -154,10 +151,11 @@ download_with_md5() {
     return 3
   fi
   if [[ -n "$hash" ]]; then
-    if ! got="$(md5sum "$tmp" | awk '{print $1}')"; then
+    if ! got="$(md5sum "$tmp")"; then
       rm -f -- "$tmp"
       return 5
     fi
+    got="${got%% *}"
     if [[ "$got" != "$hash" ]]; then
       rm -f -- "$tmp"
       return 2
@@ -172,12 +170,6 @@ download_with_md5() {
     return 4
   fi
   return 0
-}
-
-manifest_url() {
-  local encoded
-  encoded="$(jq -rn --arg path "$2" '$path | split("/") | map(@uri) | join("/")')" || return 1
-  printf '%s%s' "$1" "$encoded"
 }
 
 record_failure() {
@@ -250,9 +242,7 @@ ensure_layout() {
 }
 
 sync_root() {
-  local manifest="$1" base_url
-  base_url="$(manifest_base_url "$manifest")"
-  local key name hash file_url rel url result
+  local key name hash file_url rel result
   while IFS=$'\x1f' read -r key hash file_url; do
     [[ -n "$key" ]] || continue
     rel="${key#|}"
@@ -266,9 +256,7 @@ sync_root() {
       fi
     done
     [[ "$keep" -eq 1 ]] || continue
-    url="$(manifest_url "$base_url" "${key#|}")"
-    status "$name"
-    if sync_download "$name" "$url" "$ROOT/$name" "$hash"; then
+    if sync_download "$name" "$file_url" "$ROOT/$name" "$hash"; then
       result=0
     else
       result=$?
@@ -278,25 +266,21 @@ sync_root() {
         record_failure "$name" "chmod failed"
       fi
     fi
-  done < <(read_manifest "$manifest" | sed -n '/^[^|]/p')
+  done < <(sed -n '/^[^|]/p' <<<"$1")
 }
 
 sync_linux() {
-  local manifest="$1" base_url
-  base_url="$(manifest_base_url "$manifest")"
-  local key rel hash file_url url
+  local key rel hash file_url
   while IFS=$'\x1f' read -r key hash file_url; do
     rel="${key#|}"
     [[ "$rel" == linux/* ]] || continue
-    url="$(manifest_url "$base_url" "${key#|}")"
-    status "$rel"
-    sync_download "$rel" "$url" "$ROOT/$rel" "$hash" || :
-  done < <(read_manifest "$manifest")
+    sync_download "$rel" "$file_url" "$ROOT/$rel" "$hash" || :
+  done <<<"$1"
 }
 
 sync_cores() {
-  local manifest="$1" base_url family key rel name hash best_date best_key best_hash best_url url old file_url
-  base_url="$(manifest_base_url "$manifest")"
+  local consoles family key rel name hash best_date best_key best_hash best_url old file_url
+  consoles="$(grep -F '_Console/' <<<"$1" || :)"
   for family in "${CORE_NAMES[@]}"; do
     best_date=""
     best_key=""
@@ -314,14 +298,13 @@ sync_cores() {
           best_date="${BASH_REMATCH[1]}"
           best_key="$key"
           best_hash="$hash"
-          best_url="$(manifest_url "$base_url" "${key#|}")"
+          best_url="$file_url"
         fi
       fi
-    done < <(read_manifest "$manifest")
+    done <<<"$consoles"
     [[ -n "$best_url" ]] || continue
     name="${best_key#|}"
     name="${name##*/}"
-    status "$name"
     printf 'core match: %s -> %s\n' "$best_key" "$ROOT/$name" >>"$LOG_FILE"
     # Once the newest core is in place, drop the older dated versions it replaces.
     sync_download "$name" "$best_url" "$ROOT/$name" "$best_hash" || [[ $? -eq 1 ]] || continue
@@ -350,8 +333,7 @@ game_excluded() {
 }
 
 sync_games() {
-  local manifest="$1" preserve_unhashed="${2:-0}" base_url key rel hash file_url family dest url allowed keep
-  base_url="$(manifest_base_url "$manifest")"
+  local preserve_unhashed="${2:-0}" key rel hash file_url family dest allowed keep
   while IFS=$'\x1f' read -r key hash file_url; do
     rel="${key#|}"
     [[ "$rel" == games/* ]] || continue
@@ -367,9 +349,7 @@ sync_games() {
       fi
     done
     [[ "$keep" -eq 1 ]] || continue
-    url="${file_url:-$(manifest_url "$base_url" "${key#|}")}"
     dest="$ROOT/$rel"
-    status "$rel"
     if ! safe_destination "$rel"; then
       record_failure "$rel" "unsafe destination"
       continue
@@ -377,16 +357,15 @@ sync_games() {
     if [[ "$preserve_unhashed" -eq 1 && -z "$hash" && -f "$dest" ]]; then
       done_line "unchanged: $rel"
     else
-      sync_download "$rel" "$url" "$dest" "$hash" || :
+      sync_download "$rel" "$file_url" "$dest" "$hash" || :
     fi
-  done < <(read_manifest "$manifest")
+  done <<<"$1"
 }
 
 sync_scripts() {
   local name url result
   for name in "${SCRIPTS_FILES[@]}"; do
     url="$SCRIPTS_URL/$name"
-    status "scripts/$name"
     if sync_download "scripts/$name" "$url" "$SCRIPTS_ROOT/$name"; then
       result=0
     else
@@ -401,7 +380,7 @@ sync_scripts() {
 }
 
 main() {
-  local distribution_manifest bios_manifest
+  local distribution_manifest bios_manifest distribution_entries bios_entries
   ensure_layout
   stage distribution
   if ! distribution_manifest="$(fetch_distribution_manifest)"; then
@@ -421,16 +400,19 @@ main() {
     record_failure "BIOS manifest" "invalid JSON or structure"
     return 1
   fi
+  # Parse each manifest once; every stage reads the same entries.
+  distribution_entries="$(read_manifest "$distribution_manifest")"
+  bios_entries="$(read_manifest "$bios_manifest")"
   stage root
-  sync_root "$distribution_manifest"
+  sync_root "$distribution_entries"
   stage linux
-  sync_linux "$distribution_manifest"
+  sync_linux "$distribution_entries"
   stage cores
-  sync_cores "$distribution_manifest"
+  sync_cores "$distribution_entries"
   stage games
   ensure_game_folders
-  sync_games "$distribution_manifest"
-  sync_games "$bios_manifest" 1
+  sync_games "$distribution_entries"
+  sync_games "$bios_entries" 1
   stage scripts
   sync_scripts
   if [[ "$FAILURES" -ne 0 ]]; then

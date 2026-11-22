@@ -104,8 +104,13 @@ GAME_BLACKLIST=(
   "NeoGeo/gog-broken-romsets.xml"
 )
 
-lowercase() {
-  printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
+# Case-insensitive name match without subprocesses; nocasematch stays local.
+same_name() {
+  local r
+  shopt -s nocasematch
+  [[ "$1" == "$2" ]] && r=0 || r=1
+  shopt -u nocasematch
+  return "$r"
 }
 
 check_destination() {
@@ -161,7 +166,7 @@ canonical_from_whitelist() {
   shift
   local allowed
   for allowed in "$@"; do
-    if [[ "$(lowercase "$name")" == "$(lowercase "$allowed")" ]]; then
+    if same_name "$name" "$allowed"; then
       printf '%s\n' "$allowed"
       return 0
     fi
@@ -286,7 +291,7 @@ prune_scripts() {
       case "$name" in .|..) continue ;; esac
       keep=0
       for allowed in "${SCRIPTS_FILES[@]}"; do
-        if [[ "$(lowercase "$name")" == "$(lowercase "$allowed")" ]]; then
+        if same_name "$name" "$allowed"; then
           keep=1
           break
         fi

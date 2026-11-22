@@ -18,32 +18,30 @@ stage() {
 
 stage 'cache'
 
+# Sets CORE for a games-relative path; no subprocesses, extensions match any case.
+shopt -s nocasematch
 core_for_file() {
 	local rel="$1"
-	local folder="${rel%%/*}"
-	local ext="${rel##*.}"
-	ext="$(printf '%s' "$ext" | tr '[:upper:]' '[:lower:]')"
-
-	case "${folder}:${ext}" in
-		Gameboy:gb|Gameboy:gbc) printf 'Gameboy\n' ;;
-		GBA:gba) printf 'GBA\n' ;;
-		NES:nes|NES:fds) printf 'NES\n' ;;
-		SNES:sfc|SNES:smc|SNES:bin|SNES:bs) printf 'SNES\n' ;;
-		N64:n64|N64:z64) printf 'N64\n' ;;
-		SMS:sms) printf 'SMS\n' ;;
-		MegaDrive:bin|MegaDrive:gen|MegaDrive:md) printf 'MegaDrive\n' ;;
-		MegaCD:cue|MegaCD:chd) printf 'MegaCD\n' ;;
-		NeoGeo:neo|NeoGeo-CD:cue|NeoGeo-CD:chd) printf 'NeoGeo\n' ;;
-		TGFX16:bin|TGFX16:pce|TGFX16-CD:cue|TGFX16-CD:chd) printf 'TurboGrafx16\n' ;;
-		PSX:cue|PSX:chd|PSX:exe) printf 'PSX\n' ;;
-		Saturn:cue|Saturn:chd) printf 'Saturn\n' ;;
+	case "${rel%%/*}:${rel##*.}" in
+		Gameboy:gb|Gameboy:gbc) CORE=Gameboy ;;
+		GBA:gba) CORE=GBA ;;
+		NES:nes|NES:fds) CORE=NES ;;
+		SNES:sfc|SNES:smc|SNES:bin|SNES:bs) CORE=SNES ;;
+		N64:n64|N64:z64) CORE=N64 ;;
+		SMS:sms) CORE=SMS ;;
+		MegaDrive:bin|MegaDrive:gen|MegaDrive:md) CORE=MegaDrive ;;
+		MegaCD:cue|MegaCD:chd) CORE=MegaCD ;;
+		NeoGeo:neo|NeoGeo-CD:cue|NeoGeo-CD:chd) CORE=NeoGeo ;;
+		TGFX16:bin|TGFX16:pce|TGFX16-CD:cue|TGFX16-CD:chd) CORE=TurboGrafx16 ;;
+		PSX:cue|PSX:chd|PSX:exe) CORE=PSX ;;
+		Saturn:cue|Saturn:chd) CORE=Saturn ;;
 		*) return 1 ;;
 	esac
 }
 
 build_cache() {
 	local tmp
-	local folder file rel base core scan
+	local folder file rel base scan count
 	[[ -d "$GAMES_ROOT" ]] || { echo "Missing games root: $GAMES_ROOT" >&2; return 1; }
 	GAMES_ROOT="$(cd -- "$GAMES_ROOT" && pwd -P)"
 	[[ ! -d "$CACHE_FILE" ]] || { echo "Cache destination is a directory: $CACHE_FILE" >&2; return 1; }
@@ -76,24 +74,18 @@ build_cache() {
 			echo "Failed to scan: $GAMES_ROOT/$folder" >&2
 			return 1
 		fi
+		count=0
 		while IFS= read -r -d '' file; do
 			rel="${file#$GAMES_ROOT/}"
 			base="${rel##*/}"
 			case "$base" in
-				.*|._*) continue ;;
+				.*|*"Disc 2"*|*"Disc 3"*|*"Disc 4"*|*"Disc 5"*) continue ;;
 			esac
-			case "$base" in
-				*"Disc 2"*|*"Disc 3"*|*"Disc 4"*|*"Disc 5"*) continue ;;
-			esac
-			if core="$(core_for_file "$rel")"; then
-				case "${rel%%/*}" in
-					"$folder")
-						printf '%s\t%s\n' "$rel" "$core" >> "$tmp"
-						printf 'processing: %s\n' "$rel" >>"$LOG_FILE"
-						;;
-				esac
-			fi
-		done < "$scan"
+			core_for_file "$rel" || continue
+			printf '%s\t%s\n' "$rel" "$CORE"
+			count=$((count + 1))
+		done < "$scan" >> "$tmp"
+		printf '%s: %d games\n' "$folder" "$count" >>"$LOG_FILE"
 	done
 	[[ ! -d "$CACHE_FILE" ]] || { echo "Cache destination is a directory: $CACHE_FILE" >&2; return 1; }
 	mv -f "$tmp" "$CACHE_FILE"
