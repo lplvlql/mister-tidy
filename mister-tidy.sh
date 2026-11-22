@@ -62,7 +62,8 @@ fetch_script() {
     local source_path="${url#file://}"
     cp "$source_path" "$tmp" || { rm -f -- "$tmp"; return 1; }
   elif command -v curl >/dev/null 2>&1; then
-    if ! curl -fsSL "$url" -o "$tmp"; then
+    # MiSTer Linux ships no CA bundle.
+    if ! curl -kfsSL "$url" -o "$tmp"; then
       rm -f -- "$tmp"
       printf 'Could not download %s. See %s for the curl error.\n' "$url" "$LOG_FILE"
       return 1

@@ -146,7 +146,8 @@ download_with_md5() {
     mode="$(stat -c '%a' "$dest" 2>/dev/null || stat -f '%Lp' "$dest")" || return 4
   fi
   tmp="$(mktemp "${dest}.tmp.XXXXXX")" || return 4
-  if ! curl -fsSL "$url" -o "$tmp"; then
+  # MiSTer Linux ships no CA bundle; files are verified by manifest MD5 instead.
+  if ! curl -kfsSL "$url" -o "$tmp"; then
     rm -f -- "$tmp"
     return 3
   fi
@@ -410,7 +411,7 @@ main() {
     return 1
   fi
   stage bios
-  if ! bios_manifest="$(curl -fsSL "$BIOS_URL")"; then
+  if ! bios_manifest="$(curl -kfsSL "$BIOS_URL")"; then
     record_failure "BIOS manifest" "download failed"
     return 1
   fi
