@@ -14,8 +14,6 @@ if [[ "$ROOT" == / || "$ROOT" == "$HOME_PATH" ||
   exit 1
 fi
 SCRIPTS_ROOT="${ROOT%/}/scripts"
-# --clean also removes everything outside the allowlists (the installer uses it).
-MODE="${2-}"
 ROOT_PATH="$ROOT"
 GAMES_ROOT="${ROOT%/}/games"
 CACHE_FILE="${CACHE_FILE:-${SCRIPTS_ROOT}/.cache}"
@@ -98,9 +96,8 @@ SCRIPTS_FILES=(
   update.sh
 )
 
-# Script-folder files --clean keeps besides the scripts themselves.
+# Script-folder files clean_card keeps besides the scripts themselves.
 SCRIPTS_STATE=(
-  mister-tidy.sh
   .cache
   .shuffle
   .mgl
@@ -690,7 +687,8 @@ build_cache() {
 
 main() {
   local distribution_manifest bios_manifest distribution_entries bios_entries
-  [[ "$MODE" != --clean ]] || clean_card
+  # Every update tidies the card first: anything outside the allowlists goes.
+  clean_card
   ensure_layout
   stage distribution
   if ! distribution_manifest="$(fetch_distribution_manifest)"; then

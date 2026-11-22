@@ -4,9 +4,9 @@ Mister Tidy puts console launchers directly in the MiSTer boot menu.
 
 ## Install
 
-**Back up your SD card first.** The installer deletes files outside the allowlists before updating. If the update fails, those files are already gone.
+**Back up your SD card first.** Every update deletes files outside the allowlists below, including anything you add later.
 
-Copy `mister-tidy.sh` to the SD card’s `scripts/` folder and run it from the MiSTer Scripts menu. It targets `/media/fat` by default; pass a card path to target another directory. It installs the four scripts, runs `update.sh --clean`, and removes itself. Run it again to upgrade an older installation.
+Copy `scripts/update.sh` to the SD card’s `scripts/` folder and run it from the MiSTer Scripts menu. It installs the other scripts and keeps itself up to date. It targets `/media/fat` by default; pass a card path to target another directory.
 
 ## Scripts menu
 
@@ -35,6 +35,6 @@ Copy `mister-tidy.sh` to the SD card’s `scripts/` folder and run it from the M
 
 Supported core families: `GBA`, `Gameboy`, `MegaCD`, `MegaDrive`, `N64`, `NES`, `NeoGeo`, `PSX`, `Saturn`, `SMS`, `SNES`, `TurboGrafx16`. Each has a `games/` folder of the same name, except `NeoGeo` also uses `NeoGeo-CD/` and `TurboGrafx16` uses `TGFX16/` and `TGFX16-CD/`. `NES/` also holds FDS games; `SMS/` holds SMS games only.
 
-`update.sh` syncs `MiSTer`, `menu.rbf`, Linux files, the newest core of each family (removing older versions), game data and BIOS files, then rebuilds the game cache. With `--clean` it first removes everything outside these allowlists and the content listed in `GAME_BLACKLIST`. Saves and save states are never touched.
+`update.sh` syncs `MiSTer`, `menu.rbf`, Linux files, the newest core of each family (removing older versions), game data and BIOS files, then rebuilds the game cache. Before syncing, it removes everything outside these allowlists and the content listed in `GAME_BLACKLIST`. Saves and save states are never touched.
 
 The scripts keep their state in `scripts/`: `.log`, `.cache`, `.shuffle`, `.mgl` and `.manifest`.

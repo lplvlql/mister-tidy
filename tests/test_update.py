@@ -82,16 +82,19 @@ if rel in os.environ.get('FAIL_URLS', '').split(','):
         return subprocess.run([BASH, str(SCRIPT), str(self.card)],
                               env=self.env, capture_output=True, text=True)
 
-    def test_update_installs_scripts_and_builds_cache(self):
+    def test_update_installs_scripts_prunes_leftovers_and_builds_cache(self):
         self.manifest('dist.json', {})
         self.manifest('bios.json', {})
         self.scripts()
         (self.card / 'games/NES').mkdir(parents=True)
         (self.card / 'games/NES/a.nes').write_bytes(b'rom')
+        (self.card / 'scripts').mkdir()
+        for leftover in ('.cache.sh', '.clean.sh', 'random.sh'):
+            (self.card / 'scripts' / leftover).write_text('old helper')
         result = self.run_update()
         self.assertEqual(result.returncode, 0, self.log.read_text())
         scripts = self.card / 'scripts'
-        self.assertEqual({path.name for path in scripts.iterdir() if not path.name.startswith('.')},
+        self.assertEqual({path.name for path in scripts.iterdir()} - {'.cache', '.log', '.manifest'},
                          {'update.sh', 'shuffle.sh', 'repeat.sh', 'delete.sh'})
         self.assertEqual((scripts / '.cache').read_text(), 'NES/a.nes\tNES f 1 2\n')
 
