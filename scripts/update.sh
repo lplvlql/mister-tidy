@@ -104,8 +104,10 @@ stage() {
   printf 'stage: %s\n' "$1" >>"$LOG_FILE"
 }
 
+# One line per file: key, hash, own url (if the manifest gives one), joined by
+# the unit separator so empty fields never collapse.
 read_manifest() {
-  jq -r '.files | to_entries[] | [.key, (.value.hash // "")] | @tsv' <<<"$1"
+  jq -r '.files | to_entries[] | [.key, (.value.hash // ""), (.value.url // "")] | join("\u001f")' <<<"$1"
 }
 
 validate_manifest() {
@@ -113,7 +115,7 @@ validate_manifest() {
   jq -e -s '
     length == 1 and (.[0] |
       type == "object" and
-      (.base_files_url | type == "string" and length > 0) and
+      (.base_files_url == null or (.base_files_url | type == "string" and length > 0)) and
       (.files | type == "object") and
       all(.files[];
         type == "object" and
@@ -250,8 +252,8 @@ ensure_layout() {
 sync_root() {
   local manifest="$1" base_url
   base_url="$(manifest_base_url "$manifest")"
-  local key name hash rel url result
-  while IFS=$'\t' read -r key hash; do
+  local key name hash file_url rel url result
+  while IFS=$'\x1f' read -r key hash file_url; do
     [[ -n "$key" ]] || continue
     rel="${key#|}"
     [[ "$rel" == */* ]] && continue
@@ -282,8 +284,8 @@ sync_root() {
 sync_linux() {
   local manifest="$1" base_url
   base_url="$(manifest_base_url "$manifest")"
-  local key rel hash url
-  while IFS=$'\t' read -r key hash; do
+  local key rel hash file_url url
+  while IFS=$'\x1f' read -r key hash file_url; do
     rel="${key#|}"
     [[ "$rel" == linux/* ]] || continue
     url="$(manifest_url "$base_url" "${key#|}")"
@@ -293,7 +295,7 @@ sync_linux() {
 }
 
 sync_cores() {
-  local manifest="$1" base_url family key rel name hash best_date best_key best_hash best_url url old
+  local manifest="$1" base_url family key rel name hash best_date best_key best_hash best_url url old file_url
   base_url="$(manifest_base_url "$manifest")"
   for family in "${CORE_NAMES[@]}"; do
     best_date=""
@@ -301,7 +303,7 @@ sync_cores() {
     best_hash=""
     best_url=""
     printf 'core family: %s\n' "$family" >>"$LOG_FILE"
-    while IFS=$'\t' read -r key hash; do
+    while IFS=$'\x1f' read -r key hash file_url; do
       rel="${key#|}"
       [[ "$rel" == _Console/* ]] || continue
       name="${rel##*/}"
@@ -348,9 +350,9 @@ game_excluded() {
 }
 
 sync_games() {
-  local manifest="$1" preserve_unhashed="${2:-0}" base_url key rel hash family dest url allowed keep
+  local manifest="$1" preserve_unhashed="${2:-0}" base_url key rel hash file_url family dest url allowed keep
   base_url="$(manifest_base_url "$manifest")"
-  while IFS=$'\t' read -r key hash; do
+  while IFS=$'\x1f' read -r key hash file_url; do
     rel="${key#|}"
     [[ "$rel" == games/* ]] || continue
     game_excluded "$rel" && continue
@@ -365,7 +367,7 @@ sync_games() {
       fi
     done
     [[ "$keep" -eq 1 ]] || continue
-    url="$(manifest_url "$base_url" "${key#|}")"
+    url="${file_url:-$(manifest_url "$base_url" "${key#|}")}"
     dest="$ROOT/$rel"
     status "$rel"
     if ! safe_destination "$rel"; then

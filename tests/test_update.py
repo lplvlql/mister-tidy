@@ -180,6 +180,18 @@ if rel in os.environ.get('FAIL_URLS', '').split(','):
         self.run_update()
         self.assertTrue((self.card / 'NES_20261016.rbf').exists())
 
+    def test_manifest_with_per_file_urls_and_no_base_url(self):
+        self.manifest('dist.json', ['MiSTer'])
+        src = self.payload / 'mirror/boot.rom'
+        src.parent.mkdir(parents=True)
+        src.write_bytes(b'bios bytes')
+        (self.payload / 'bios.json').write_text(json.dumps({'db_id': 'bios_db', 'files': {
+            'games/PSX/boot.rom': {'hash': hashlib.md5(b'bios bytes').hexdigest(), 'url': src.as_uri()}}}))
+        self.scripts()
+        result = self.run_update()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual((self.card / 'games/PSX/boot.rom').read_bytes(), b'bios bytes')
+
     def test_removed_platforms_are_not_synced(self):
         self.manifest('dist.json', ['_Console/S32X_20261016.rbf',
                                    'games/S32X/support', 'games/NeoGeoPocket/support', 'games/SMS/game.GG',
