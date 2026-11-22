@@ -4,7 +4,7 @@ set -euo pipefail
 
 cd -- "$(dirname -- "$0")"
 
-[[ -f .mgl ]] || { echo 'no last game' >&2; exit 1; }
+[[ -f .mgl ]] || { echo 'no game to delete' >&2; exit 1; }
 
 # Decode ampersand last to preserve literal entity-looking filename text.
 file="$(sed -n 's/.*path="\([^"]*\)".*/\1/p' .mgl |
@@ -14,7 +14,7 @@ file="$(sed -n 's/.*path="\([^"]*\)".*/\1/p' .mgl |
 games="$(cd ../games && pwd -P)"
 folder="$(cd -- "$(dirname -- "$file")" 2>/dev/null && pwd -P || :)"
 if [[ "$folder/" != "$games/"* || -L "$file" || ! -f "$file" ]]; then
-  echo "not a game on this card: $file" >&2
+  echo "game not found: $file" >&2
   exit 1
 fi
 

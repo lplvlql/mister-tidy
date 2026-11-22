@@ -5,7 +5,7 @@ set -euo pipefail
 cd -- "$(dirname -- "$0")"
 
 GAMES="$(cd .. && pwd)/games"
-[[ -s .cache ]] || { echo 'no game cache; run update.sh' >&2; exit 1; }
+[[ -s .cache ]] || { echo 'run update.sh first' >&2; exit 1; }
 
 # Set rel and launch to a random game that exists and is not listed in file $1.
 pick() {

@@ -15,6 +15,14 @@ SOURCE = Path(__file__).resolve().parents[1] / 'scripts'
 FAMILIES = ('GBA Gameboy MegaCD MegaDrive N64 NeoGeo-CD NES NeoGeo PSX Saturn SMS SNES '
             'TGFX16 TGFX16-CD').split()
 CORES = 'GBA Gameboy MegaCD MegaDrive N64 NeoGeo NES PSX Saturn SMS SNES TurboGrafx16'.split()
+STEPS = '''checking scripts
+tidying card
+listing games
+checking system
+checking cores
+checking game files
+done
+'''
 
 
 class Card(unittest.TestCase):
@@ -73,7 +81,8 @@ class Card(unittest.TestCase):
     def run_script(self, name, *args, ok=True, path=''):
         env = dict(self.env, PATH=path + os.environ['PATH'])
         result = subprocess.run([BASH, str(self.card / 'scripts' / name), *map(str, args)],
-                                env=env, capture_output=True, text=True, timeout=60)
+                                env=env, capture_output=True, text=True, timeout=60,
+                                stdin=subprocess.DEVNULL)
         detail = result.stdout + result.stderr
         self.assertEqual(result.returncode == 0, ok, detail)
         return detail
@@ -110,7 +119,7 @@ class Update(Card):
                 self.assertEqual(self.tree(self.base), before)
         self.env['FAKE_MOUNT'] = f' {self.card}/'
         detail = self.run_script('update.sh', ok=False, path=f'{fake.parent}:')
-        self.assertIn('mounted', detail)
+        self.assertIn('unmount', detail)
         self.assertEqual(self.tree(self.base), before)
         for name in ('saves', 'games', 'games/NES'):
             with self.subTest(symlink=name):
@@ -146,7 +155,7 @@ class Update(Card):
             self.assertFalse((self.card / name).is_symlink(), name)
         self.assertEqual(self.outside.read_text(), 'outside')
         before = self.tree(self.card)
-        self.assertEqual(self.update(), 'updating\ndone\n')
+        self.assertEqual(self.update(), STEPS)
         self.assertEqual(self.tree(self.card), before)
 
     def test_sync_installs_wanted_files_only(self):
@@ -173,16 +182,16 @@ class Update(Card):
         self.assertTrue(os.access(self.card / 'MiSTer', os.X_OK))
 
     def test_new_updater_does_everything_in_one_run(self):
-        new = (SOURCE / 'update.sh').read_text().replace("'updating'", "'updating v2'")
+        new = (SOURCE / 'update.sh').read_text().replace('tidying card', 'tidying v2')
         self.write(self.remote / 'scripts/update.sh', new)
         self.write(self.card / 'junk')
         output = self.run_script('update.sh').splitlines()
-        self.assertEqual(output[2:5], ['updated: scripts/shuffle.sh', 'updated: scripts/update.sh',
-                                       'updating v2'])
-        self.assertIn('removed: junk', output[5:])
+        self.assertEqual(output[3:7], ['updated: scripts/shuffle.sh', 'updated: scripts/update.sh',
+                                       'checking scripts', 'tidying v2'])
+        self.assertIn('removed: junk', output[7:])
         self.assertEqual(output[-1], 'done')
         self.assertTrue(os.access(self.card / 'scripts/update.sh', os.X_OK))
-        self.assertEqual(self.run_script('update.sh'), 'updating v2\ndone\n')
+        self.assertEqual(self.run_script('update.sh'), STEPS.replace('tidying card', 'tidying v2'))
         # Without a working cmp every copy looks new; it must still finish.
         fake = self.write(self.base / 'bin/cmp', '#!/bin/bash\nexit 127\n')
         fake.chmod(0o755)
@@ -212,7 +221,7 @@ exit $rc
             count.write_text('')
             killed = subprocess.run([BASH, str(SOURCE / 'update.sh'), str(self.card)],
                                     env=dict(env, KILL_AT=str(step)), capture_output=True,
-                                    start_new_session=True)
+                                    stdin=subprocess.DEVNULL, start_new_session=True)
             with self.subTest(step=step):
                 for name in ('saves/a.sav', 'savestates/a.ss', 'config/a.cfg', 'games/NES/a.nes'):
                     self.assertTrue((self.card / name).exists(), name)

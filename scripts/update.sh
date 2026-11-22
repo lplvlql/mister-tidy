@@ -49,23 +49,27 @@ ROOT_DIRS=(config games linux saves savestates scripts)
 SCRIPTS_FILES=(delete.sh repeat.sh shuffle.sh update.sh)
 SCRIPTS_STATE=(.cache .shuffle .mgl)
 
+# The menu closes the screen at exit, so leave the result up: any key skips the wait.
+zip=""
+trap 'rm -f -- "$zip"; [[ ! -t 0 ]] || read -rsn 1 -t 10 || :' EXIT
+
 refuse() {
-  echo "refusing update: $1" >&2
+  echo "stopped: $1" >&2
   exit 1
 }
 
 # Validate the card before changing anything.
 ROOT="${1-$(dirname -- "${BASH_SOURCE[0]}")/..}"
-[[ -n "$ROOT" && -d "$ROOT" ]] || refuse "invalid card directory: $ROOT"
+[[ -n "$ROOT" && -d "$ROOT" ]] || refuse "no such folder: $ROOT"
 ROOT="$(cd -- "$ROOT" && pwd -P)"
 [[ "$ROOT" != / && "$ROOT" != "$(cd -- "$HOME" && pwd -P)" &&
    -f "$ROOT/MiSTer" && -f "$ROOT/menu.rbf" ]] || refuse "not a MiSTer card: $ROOT"
 for dir in "${ROOT_DIRS[@]}" "${GAME_DIRS[@]/#/games/}"; do
   path="$ROOT/$dir"
-  [[ ! -L "$path" && ( ! -e "$path" || -d "$path" ) ]] || refuse "not a plain folder: $path"
+  [[ ! -L "$path" && ( ! -e "$path" || -d "$path" ) ]] || refuse "not a normal folder: $path"
 done
 # Deleting a mount point would empty whatever is mounted there.
-! grep -qsF " $ROOT/" /proc/mounts || refuse "something is mounted under $ROOT"
+! grep -qsF " $ROOT/" /proc/mounts || refuse "unmount drives inside $ROOT"
 
 CACHE_FILE="$ROOT/scripts/.cache"
 FAILURES=0
@@ -238,12 +242,14 @@ build_cache() {
 main() {
   local dist bios
   # Scripts and cache do not depend on the manifests, so a bad one cannot block them.
+  echo 'checking scripts'
   sync_scripts
-  echo 'updating'
+  echo 'tidying card'
   clean_card
+  echo 'listing games'
   build_cache
+  echo 'checking system'
   zip="$(mktemp)"
-  trap 'rm -f -- "$zip"' EXIT
   if ! curl -kfsSL "$DIST_URL" -o "$zip" ||
      ! dist="$(unzip -p "$zip" | read_manifest)" ||
      ! bios="$(curl -kfsSL "$BIOS_URL" | read_manifest)"; then
@@ -251,7 +257,9 @@ main() {
     return 1
   fi
   sync_system "$dist"
+  echo 'checking cores'
   sync_cores "$dist"
+  echo 'checking game files'
   sync_games "$dist"
   sync_games "$bios"
   # Power is often cut as soon as this ends.
