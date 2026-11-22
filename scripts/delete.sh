@@ -2,79 +2,34 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-ROOT="${1:-${ROOT:-/media/fat}}"
-GAMES_ROOT="${GAMES_ROOT:-${ROOT%/}/games}"
-CACHE_FILE="${CACHE_FILE:-${SCRIPT_DIR}/.cache}"
-MGL_FILE="${MGL_FILE:-${SCRIPT_DIR}/.mgl}"
-LOG_FILE="${MISTER_TIDY_LOG_FILE:-${SCRIPT_DIR}/.log}"
+cd -- "$(dirname -- "$0")"
 
-mkdir -p "${LOG_FILE%/*}"
-exec 2>>"$LOG_FILE"
-
-stage() {
-  printf '\n==> %s\n' "$1"
-  printf 'stage: %s\n' "$1" >>"$LOG_FILE"
-}
-
-stage 'delete'
-
-if [[ ! -f "$MGL_FILE" ]]; then
-  echo "No saved MGL found at ${MGL_FILE}" >&2
-  exit 1
-fi
-
-rel="$(sed -n 's/.*path="\([^"]*\)".*/\1/p' "$MGL_FILE" | head -n 1)"
-if [[ -z "$rel" ]]; then
-  echo "Saved MGL does not contain a target path" >&2
-  exit 1
-fi
+[[ -f .mgl ]] || { echo 'no last game' >&2; exit 1; }
 
 # Decode ampersand last to preserve literal entity-looking filename text.
-rel="$(printf '%s' "$rel" | sed -e 's/&quot;/"/g' -e 's/&lt;/</g' -e 's/&gt;/>/g' -e 's/&amp;/\&/g')"
+file="$(sed -n 's/.*path="\([^"]*\)".*/\1/p' .mgl |
+  sed -e 's/&quot;/"/g' -e 's/&lt;/</g' -e 's/&gt;/>/g' -e 's/&amp;/\&/g')"
 
-# Resolve directory components before checking containment. A text prefix alone
-# accepts ../ traversal and symlinked directories leading outside games.
-if [[ "$rel" != /* ]] ||
-   ! games_path="$(cd -- "$GAMES_ROOT" && pwd -P)" ||
-   ! parent_path="$(cd -- "$(dirname -- "$rel")" && pwd -P)"; then
-  echo "Cannot resolve saved game path: $rel" >&2
-  exit 1
-fi
-if [[ "$games_path" == / ||
-      ( "$parent_path" != "$games_path" && "$parent_path" != "$games_path/"* ) ||
-      -L "$rel" ]]; then
-  echo "Saved MGL points outside games or targets a symlink: $rel" >&2
-  exit 1
-fi
-rel="${parent_path}/${rel##*/}"
-
-if [[ ! -f "$rel" ]]; then
-  echo "Saved game is missing: ${rel}" >&2
-  rm -f "$MGL_FILE"
+# Resolve folders first: a text prefix alone accepts ../ and symlinked folders.
+games="$(cd ../games && pwd -P)"
+folder="$(cd -- "$(dirname -- "$file")" && pwd -P)"
+if [[ "$folder/" != "$games/"* || -L "$file" || ! -f "$file" ]]; then
+  echo "not a game on this card: $file" >&2
   exit 1
 fi
 
-[[ ! -d "$CACHE_FILE" ]] || { echo "Cache destination is a directory: $CACHE_FILE" >&2; exit 1; }
-
-# Stage the cache edit before deleting the ROM. Use literal comparisons so
-# filenames containing glob/regex characters remain ordinary filenames.
-cache_tmp=""
-if [[ -f "$CACHE_FILE" ]]; then
-  cache_tmp="$(mktemp "${CACHE_FILE}.XXXXXX")"
-  trap 'rm -f -- "$cache_tmp"' EXIT
-  while IFS= read -r line || [[ -n "$line" ]]; do
-    cached_rel="${line%%$'\t'*}"
-    [[ "${GAMES_ROOT%/}/$cached_rel" == "$rel" || "$games_path/$cached_rel" == "$rel" ]] && continue
-    printf '%s\n' "$line"
-  done < "$CACHE_FILE" > "$cache_tmp"
-fi
-rm -f "$rel"
-if [[ -n "$cache_tmp" ]]; then
-  mv -f "$cache_tmp" "$CACHE_FILE"
-  trap - EXIT
-fi
-rm -f "$MGL_FILE"
-
-printf 'deleted: %s\n' "$rel" >>"$LOG_FILE"
-printf 'done\n'
+# Remove every disc of the game and the tracks its cue sheets name. The chosen
+# file goes last, so an interrupted run can be repeated.
+name="${file##*/}"
+for n in 5 4 3 2 1; do
+  disc="$folder/${name/Disc 1/Disc $n}"
+  [[ -f "$disc" ]] || continue
+  if [[ "$disc" == *.[cC][uU][eE] ]]; then
+    while IFS= read -r track; do
+      rm -f -- "$folder/${track##*/}"
+    done < <(sed -n 's/^[[:space:]]*FILE "\([^"]*[^"/]\)".*/\1/p' "$disc")
+  fi
+  rm -f -- "$disc"
+done
+rm -f .mgl
+echo "deleted: $name"
