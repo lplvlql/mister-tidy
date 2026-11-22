@@ -254,6 +254,8 @@ main() {
   sync_cores "$dist"
   sync_games "$dist"
   sync_games "$bios"
+  # Power is often cut as soon as this ends.
+  sync
   (( FAILURES == 0 )) || { echo "$FAILURES failed"; return 1; }
   echo 'done'
 }
