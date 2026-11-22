@@ -13,21 +13,21 @@ mkdir -p "${LOG_FILE%/*}"
 exec 2>>"$LOG_FILE"
 
 stage() {
-	printf '\n==> %s\n' "$1"
-	printf 'stage: %s\n' "$1" >>"$LOG_FILE"
+  printf '\n==> %s\n' "$1"
+  printf 'stage: %s\n' "$1" >>"$LOG_FILE"
 }
 
 stage 'repeat'
 
 if [[ ! -f "$MGL_FILE" ]]; then
-	echo "No saved MGL found at ${MGL_FILE}" >&2
-	exit 1
+  echo "No saved MGL found at ${MGL_FILE}" >&2
+  exit 1
 fi
 
 rel="$(sed -n 's/.*path="\([^"]*\)".*/\1/p' "$MGL_FILE" | head -n 1)"
 if [[ -z "$rel" ]]; then
-	echo "Saved MGL does not contain a target path" >&2
-	exit 1
+  echo "Saved MGL does not contain a target path" >&2
+  exit 1
 fi
 
 # Decode ampersand last to preserve literal entity-looking filename text.
@@ -38,20 +38,20 @@ rel="$(printf '%s' "$rel" | sed -e 's/&quot;/"/g' -e 's/&lt;/</g' -e 's/&gt;/>/g
 if [[ "$rel" != /* ]] ||
    ! games_path="$(cd -- "$GAMES_ROOT" && pwd -P)" ||
    ! parent_path="$(cd -- "$(dirname -- "$rel")" && pwd -P)"; then
-	echo "Cannot resolve saved game path: $rel" >&2
-	exit 1
+  echo "Cannot resolve saved game path: $rel" >&2
+  exit 1
 fi
 if [[ "$games_path" == / ||
       ( "$parent_path" != "$games_path" && "$parent_path" != "$games_path/"* ) ||
       -L "$rel" ]]; then
-	echo "Saved MGL points outside games or targets a symlink: $rel" >&2
-	exit 1
+  echo "Saved MGL points outside games or targets a symlink: $rel" >&2
+  exit 1
 fi
 rel="${parent_path}/${rel##*/}"
 
 if [[ ! -f "$rel" ]]; then
-	echo "Saved game is missing: ${rel}" >&2
-	exit 1
+  echo "Saved game is missing: ${rel}" >&2
+  exit 1
 fi
 
 printf 'load_core %s\n' "$MGL_FILE" > "$MISTER_CMD"

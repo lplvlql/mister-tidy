@@ -12,10 +12,10 @@ Copy `scripts/update.sh` to the SD card’s `scripts/` folder and run it from th
 
 | Script | Action |
 | --- | --- |
-| `update.sh` | Update the card and refresh the game cache |
-| `shuffle.sh` | Launch a random game without repeating a pick until the pool is exhausted |
-| `repeat.sh` | Relaunch the last selection |
-| `delete.sh` | Delete the selected game and clear its launch file |
+| `update.sh` | Tidy and update the card, then rebuild the game cache |
+| `shuffle.sh` | Launch a random game, never repeating one until every game has played |
+| `repeat.sh` | Relaunch the last game |
+| `delete.sh` | Delete the last game from the card |
 
 ## Card layout
 
