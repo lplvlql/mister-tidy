@@ -1,5 +1,3 @@
 .*
 !/.gitignore
-!/scripts/.clean.sh
-!/scripts/.cache.sh
 __pycache__/

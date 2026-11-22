@@ -26,8 +26,6 @@ ROOT_FILES=(
 )
 
 SCRIPTS_FILES=(
-  .clean.sh
-  .cache.sh
   delete.sh
   repeat.sh
   shuffle.sh
@@ -106,8 +104,7 @@ main() {
   done
   install_payload
   ensure_bootstrap_scripts
-  "${SCRIPTS_ROOT}/.clean.sh" "$ROOT_DIR"
-  "${SCRIPTS_ROOT}/update.sh" "$ROOT_DIR"
+  "${SCRIPTS_ROOT}/update.sh" "$ROOT_DIR" --clean
   rm -f "${SCRIPTS_ROOT}/${script_name}"
   printf 'migration complete\n'
 }

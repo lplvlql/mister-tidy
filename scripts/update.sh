@@ -14,6 +14,11 @@ if [[ "$ROOT" == / || "$ROOT" == "$HOME_PATH" ||
   exit 1
 fi
 SCRIPTS_ROOT="${ROOT%/}/scripts"
+# --clean also removes everything outside the allowlists (the installer uses it).
+MODE="${2-}"
+ROOT_PATH="$ROOT"
+GAMES_ROOT="${ROOT%/}/games"
+CACHE_FILE="${CACHE_FILE:-${SCRIPTS_ROOT}/.cache}"
 LOG_FILE="${MISTER_TIDY_LOG_FILE:-${SCRIPT_DIR}/.log}"
 MANIFEST_FILE="${MANIFEST_FILE:-${SCRIPTS_ROOT}/.manifest}"
 
@@ -82,13 +87,25 @@ ROOT_FILES=(
   menu.rbf
 )
 
+ROOT_INI_PREFIXES=(
+  MiSTer
+)
+
 SCRIPTS_FILES=(
-  .clean.sh
-  .cache.sh
   delete.sh
   repeat.sh
   shuffle.sh
   update.sh
+)
+
+# Script-folder files --clean keeps besides the scripts themselves.
+SCRIPTS_STATE=(
+  mister-tidy.sh
+  .cache
+  .shuffle
+  .mgl
+  .manifest
+  .log
 )
 
 done_line() {
@@ -379,8 +396,301 @@ sync_scripts() {
   done
 }
 
+# Case-insensitive name match without subprocesses; nocasematch stays local.
+same_name() {
+  local r
+  shopt -s nocasematch
+  [[ "$1" == "$2" ]] && r=0 || r=1
+  shopt -u nocasematch
+  return "$r"
+}
+
+check_destination() {
+  local entry="$1" dst="$2"
+  if [[ ( -e "$dst" || -L "$dst" ) && ! "$entry" -ef "$dst" ]]; then
+    echo "refusing normalization collision: $entry -> $dst" >&2
+    exit 1
+  fi
+}
+
+move_or_rename() {
+  local entry="$1" dst="$2" tmp
+  check_destination "$entry" "$dst"
+  if [[ "$entry" -ef "$dst" ]]; then
+    # On a case-insensitive card both spellings identify the same directory.
+    # Use a unique temporary directory without deleting either spelling.
+    tmp="$(mktemp -d "${entry%/*}/.mister-rename.XXXXXX")"
+    mv "$entry" "$tmp/entry"
+    mv "$tmp/entry" "$dst"
+    rmdir "$tmp"
+  else
+    mv "$entry" "$dst"
+  fi
+}
+
+# Check for name collisions and directory symlinks before pruning.
+preflight() {
+  local entry base canonical child child_name
+  for entry in "$ROOT_PATH"/* "$ROOT_PATH"/.*; do
+    [[ -e "$entry" || -L "$entry" ]] || continue
+    base="${entry##*/}"
+    case "$base" in .|..) continue ;; esac
+    if canonical="$(canonical_from_whitelist "$base" "${ROOT_DIRS[@]}")"; then
+      [[ ! -L "$entry" && -d "$entry" ]] || { echo "invalid card folder: $entry" >&2; exit 1; }
+      check_destination "$entry" "$ROOT_PATH/$canonical"
+      if [[ "$canonical" == games ]]; then
+        for child in "$entry"/* "$entry"/.*; do
+          [[ -e "$child" || -L "$child" ]] || continue
+          child_name="${child##*/}"
+          case "$child_name" in .|..) continue ;; esac
+          if canonical="$(canonical_from_whitelist "$child_name" "${GAME_DIRS[@]}")"; then
+            [[ ! -L "$child" && -d "$child" ]] || { echo "invalid game folder: $child" >&2; exit 1; }
+            check_destination "$child" "$entry/$canonical"
+          fi
+        done
+      fi
+    fi
+  done
+}
+
+canonical_from_whitelist() {
+  local name="$1"
+  shift
+  local allowed
+  for allowed in "$@"; do
+    if same_name "$name" "$allowed"; then
+      printf '%s\n' "$allowed"
+      return 0
+    fi
+  done
+  return 1
+}
+
+normalize_root() {
+  local entry base dst
+  for entry in "${ROOT_PATH}"/* "${ROOT_PATH}"/.*; do
+    [[ -e "$entry" || -L "$entry" ]] || continue
+    case "${entry##*/}" in
+      .|..) continue ;;
+    esac
+    base="${entry##*/}"
+    if ! dst="$(canonical_from_whitelist "$base" "${ROOT_DIRS[@]}")"; then
+      continue
+    fi
+    dst="${ROOT_PATH}/${dst}"
+    if [[ "$entry" != "$dst" ]]; then
+      move_or_rename "$entry" "$dst"
+    fi
+  done
+}
+
+prune_root() {
+  local entry base keep prefix
+  for entry in "${ROOT_PATH}"/* "${ROOT_PATH}"/.*; do
+    [[ -e "$entry" || -L "$entry" ]] || continue
+    case "${entry##*/}" in
+      .|..) continue ;;
+    esac
+    base="${entry##*/}"
+    keep=0
+    for allowed in "${ROOT_FILES[@]}" "${ROOT_DIRS[@]}"; do
+      if [[ "$base" == "$allowed" ]]; then
+        keep=1
+        break
+      fi
+    done
+    case "$base" in
+      *.ini)
+        if [[ "$keep" -eq 1 ]]; then
+          continue
+        fi
+        for prefix in "${ROOT_INI_PREFIXES[@]}"; do
+          if [[ "$base" == "${prefix}"* ]]; then
+            keep=1
+            break
+          fi
+        done
+        ;;
+      *.rbf)
+        if [[ "$keep" -eq 1 ]]; then
+          continue
+        fi
+        keep=0
+        for prefix in "${CORE_NAMES[@]}"; do
+          if [[ "$base" == "${prefix}"_*".rbf" ]]; then
+            keep=1
+            break
+          fi
+        done
+        ;;
+    esac
+    if [[ "$keep" -eq 0 ]]; then
+      rm -rf "$entry"
+    fi
+  done
+}
+
+normalize_games() {
+  local entry base dst
+  for entry in "${ROOT_PATH}/games"/* "${ROOT_PATH}/games"/.*; do
+    [[ -e "$entry" || -L "$entry" ]] || continue
+    case "${entry##*/}" in
+      .|..) continue ;;
+    esac
+    base="${entry##*/}"
+    if ! dst="$(canonical_from_whitelist "$base" "${GAME_DIRS[@]}")"; then
+      continue
+    fi
+    dst="${ROOT_PATH}/games/${dst}"
+    if [[ "$entry" != "$dst" ]]; then
+      move_or_rename "$entry" "$dst"
+    fi
+  done
+}
+
+prune_games() {
+  local entry name keep banned
+  if [[ -d "${ROOT_PATH}/games" ]]; then
+    if [[ -d "${ROOT_PATH}/games/SMS" ]]; then
+      find "${ROOT_PATH}/games/SMS" -type f -iname '*.gg' -exec rm -f {} +
+    fi
+    for banned in "${GAME_BLACKLIST[@]}"; do
+      rm -rf "${ROOT_PATH}/games/${banned}"
+    done
+
+    for entry in "${ROOT_PATH}/games"/* "${ROOT_PATH}/games"/.*; do
+      [[ -e "$entry" || -L "$entry" ]] || continue
+      name="${entry##*/}"
+      case "$name" in .|..) continue ;; esac
+      keep=0
+      for allowed in "${GAME_DIRS[@]}"; do
+        if [[ "$name" == "$allowed" ]]; then
+          keep=1
+          break
+        fi
+      done
+      [[ "$keep" -eq 1 ]] || rm -rf "$entry"
+    done
+  fi
+}
+
+prune_scripts() {
+  local entry name keep
+  if [[ -d "${ROOT_PATH}/scripts" ]]; then
+    for entry in "${ROOT_PATH}/scripts"/* "${ROOT_PATH}/scripts"/.*; do
+      [[ -e "$entry" || -L "$entry" ]] || continue
+      name="${entry##*/}"
+      case "$name" in .|..) continue ;; esac
+      keep=0
+      for allowed in "${SCRIPTS_FILES[@]}" "${SCRIPTS_STATE[@]}"; do
+        if same_name "$name" "$allowed"; then
+          keep=1
+          break
+        fi
+      done
+      if [[ "$keep" -eq 0 ]]; then
+        rm -rf "$entry"
+      fi
+    done
+  fi
+}
+
+clean_card() {
+  preflight
+  stage 'normalize root'
+  normalize_root
+  stage 'prune root'
+  prune_root
+  stage 'normalize games'
+  normalize_games
+  stage 'prune games'
+  prune_games
+  stage 'prune scripts'
+  prune_scripts
+}
+
+# Sets ENTRY to "core type index delay" for a games-relative path: the core
+# to load and its MGL launch settings. No subprocesses; extensions match any case.
+entry_for_file() {
+  ENTRY=
+  shopt -s nocasematch
+  case "${1%%/*}:${1##*.}" in
+    Gameboy:gb|Gameboy:gbc) ENTRY='Gameboy f 1 2' ;;
+    GBA:gba) ENTRY='GBA f 1 2' ;;
+    NES:nes|NES:fds) ENTRY='NES f 1 2' ;;
+    SNES:sfc|SNES:smc|SNES:bin|SNES:bs) ENTRY='SNES f 0 2' ;;
+    N64:n64|N64:z64) ENTRY='N64 f 1 1' ;;
+    SMS:sms) ENTRY='SMS f 1 1' ;;
+    MegaDrive:bin|MegaDrive:gen|MegaDrive:md) ENTRY='MegaDrive f 1 1' ;;
+    MegaCD:cue|MegaCD:chd) ENTRY='MegaCD s 0 1' ;;
+    NeoGeo:neo) ENTRY='NeoGeo f 1 1' ;;
+    NeoGeo-CD:cue|NeoGeo-CD:chd) ENTRY='NeoGeo s 1 1' ;;
+    TGFX16:bin|TGFX16:pce) ENTRY='TurboGrafx16 f 0 1' ;;
+    TGFX16-CD:cue|TGFX16-CD:chd) ENTRY='TurboGrafx16 s 1 1' ;;
+    PSX:cue|PSX:chd|PSX:exe) ENTRY='PSX s 0 1' ;;
+    Saturn:cue|Saturn:chd) ENTRY='Saturn s 0 1' ;;
+  esac
+  shopt -u nocasematch
+  [[ -n "$ENTRY" ]]
+}
+
+build_cache() {
+  local tmp
+  local folder file rel base scan count
+  [[ -d "$GAMES_ROOT" ]] || { echo "Missing games root: $GAMES_ROOT" >&2; return 1; }
+  GAMES_ROOT="$(cd -- "$GAMES_ROOT" && pwd -P)"
+  [[ ! -d "$CACHE_FILE" ]] || { echo "Cache destination is a directory: $CACHE_FILE" >&2; return 1; }
+  tmp="$(mktemp "${CACHE_FILE}.tmp.XXXXXX")"
+  cache_tmp="$tmp"
+  cache_scan=""
+  trap 'rm -f -- "$cache_tmp" "$cache_scan"' EXIT
+  scan="$(mktemp "${CACHE_FILE}.scan.XXXXXX")"
+  cache_scan="$scan"
+  for folder in \
+    Gameboy \
+    GBA \
+    MegaCD \
+    MegaDrive \
+    N64 \
+    NeoGeo \
+    NeoGeo-CD \
+    NES \
+    PSX \
+    Saturn \
+    SMS \
+    SNES \
+    TGFX16 \
+    TGFX16-CD
+  do
+    stage "$folder"
+    # Unsupported/absent families are optional, but scan errors are fatal.
+    [[ -e "$GAMES_ROOT/$folder" || -L "$GAMES_ROOT/$folder" ]] || continue
+    if [[ -L "$GAMES_ROOT/$folder" || ! -d "$GAMES_ROOT/$folder" ]] || ! find "$GAMES_ROOT/$folder" -type f -print0 > "$scan"; then
+      echo "Failed to scan: $GAMES_ROOT/$folder" >&2
+      return 1
+    fi
+    count=0
+    while IFS= read -r -d '' file; do
+      rel="${file#$GAMES_ROOT/}"
+      base="${rel##*/}"
+      case "$base" in
+        .*|*"Disc 2"*|*"Disc 3"*|*"Disc 4"*|*"Disc 5"*) continue ;;
+      esac
+      entry_for_file "$rel" || continue
+      printf '%s\t%s\n' "$rel" "$ENTRY"
+      count=$((count + 1))
+    done < "$scan" >> "$tmp"
+    printf '%s: %d games\n' "$folder" "$count" >>"$LOG_FILE"
+  done
+  [[ ! -d "$CACHE_FILE" ]] || { echo "Cache destination is a directory: $CACHE_FILE" >&2; return 1; }
+  mv -f "$tmp" "$CACHE_FILE"
+  rm -f "$scan"
+  trap - EXIT
+}
+
 main() {
   local distribution_manifest bios_manifest distribution_entries bios_entries
+  [[ "$MODE" != --clean ]] || clean_card
   ensure_layout
   stage distribution
   if ! distribution_manifest="$(fetch_distribution_manifest)"; then
@@ -420,9 +730,8 @@ main() {
     return 1
   fi
   stage cache
-  MISTER_TIDY_LOG_FILE="$LOG_FILE" "$SCRIPTS_ROOT/.cache.sh" "$ROOT"
-  rm -f -- "$SCRIPTS_ROOT/clean.sh" "$SCRIPTS_ROOT/cache.sh" \
-    "$SCRIPTS_ROOT/random.sh" "$SCRIPTS_ROOT/last.sh"
+  build_cache
 }
 
-main
+# Run when executed; tests source this file to call one stage.
+[[ "${BASH_SOURCE[0]}" != "$0" ]] || main

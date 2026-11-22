@@ -11,6 +11,13 @@ import zipfile
 
 BASH = os.environ.get('MISTER_TEST_BASH', '/bin/bash')
 SCRIPT = Path(__file__).resolve().parents[1] / 'scripts/update.sh'
+UPDATE = SCRIPT
+
+
+def run_stage(stage, card, env):
+    """Source update.sh (its guard skips main) and run one stage on a card."""
+    return subprocess.run([BASH, '-c', 'source "$1" "$2"; ' + stage, 'run-stage', str(UPDATE), str(card)],
+                          env=env, capture_output=True, text=True)
 
 
 class UpdateFailures(unittest.TestCase):
@@ -66,7 +73,7 @@ if rel in os.environ.get('FAIL_URLS', '').split(','):
             'base_files_url': self.payload.as_uri() + '/', 'files': files}))
 
     def scripts(self):
-        for name in ('.clean.sh', '.cache.sh', 'delete.sh', 'repeat.sh', 'shuffle.sh', 'update.sh'):
+        for name in ('delete.sh', 'repeat.sh', 'shuffle.sh', 'update.sh'):
             dest = self.payload / 'scripts' / name
             dest.parent.mkdir(exist_ok=True)
             dest.write_text('#!/bin/bash\n# fixture\n')
@@ -75,21 +82,18 @@ if rel in os.environ.get('FAIL_URLS', '').split(','):
         return subprocess.run([BASH, str(SCRIPT), str(self.card)],
                               env=self.env, capture_output=True, text=True)
 
-    def test_update_hides_helpers_and_removes_legacy_scripts(self):
+    def test_update_installs_scripts_and_builds_cache(self):
         self.manifest('dist.json', {})
         self.manifest('bios.json', {})
         self.scripts()
-        scripts = self.card / 'scripts'
-        scripts.mkdir()
-        for name in ('clean.sh', 'cache.sh', 'random.sh', 'last.sh'):
-            (scripts / name).write_text('legacy helper')
-        (self.payload / 'scripts/.cache.sh').write_text(
-            '#!/bin/bash\nprintf refreshed > "$1/scripts/.cache"\n')
+        (self.card / 'games/NES').mkdir(parents=True)
+        (self.card / 'games/NES/a.nes').write_bytes(b'rom')
         result = self.run_update()
         self.assertEqual(result.returncode, 0, self.log.read_text())
+        scripts = self.card / 'scripts'
         self.assertEqual({path.name for path in scripts.iterdir() if not path.name.startswith('.')},
                          {'update.sh', 'shuffle.sh', 'repeat.sh', 'delete.sh'})
-        self.assertEqual((scripts / '.cache').read_text(), 'refreshed')
+        self.assertEqual((scripts / '.cache').read_text(), 'NES/a.nes\tNES f 1 2\n')
 
     def test_invalid_update_targets_refuse_before_writes_or_downloads(self):
         wrong = self.base / 'wrong'
@@ -124,9 +128,9 @@ if rel in os.environ.get('FAIL_URLS', '').split(','):
         bios['files']['games/NES/rawbios']['hash'] = ''
         (self.payload / 'bios.json').write_text(json.dumps(bios))
         self.scripts()
-        self.env['FAIL_URLS'] = 'linux/test,_Console/NES_20261016.rbf,games/NES/rawbios,scripts/.clean.sh'
+        self.env['FAIL_URLS'] = 'linux/test,_Console/NES_20261016.rbf,games/NES/rawbios,scripts/delete.sh'
         for name in ('MiSTer', 'linux/test', 'NES_20261016.rbf', 'games/NES/support',
-                     'games/NES/hashbios', 'scripts/.clean.sh'):
+                     'games/NES/hashbios', 'scripts/delete.sh'):
             dest = self.card / name
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(b'original')
@@ -138,7 +142,7 @@ if rel in os.environ.get('FAIL_URLS', '').split(','):
                              ('games/NES/support', 'checksum mismatch'),
                              ('games/NES/hashbios', 'checksum mismatch'),
                              ('games/NES/rawbios', 'download failed'),
-                             ('scripts/.clean.sh', 'download failed')]:
+                             ('scripts/delete.sh', 'download failed')]:
             self.assertIn(f'failed: {name} ({reason})', log)
             self.assertNotIn(f'unchanged: {name}\n', log)
             self.assertNotIn(f'copied: {name}\n', log)
@@ -218,9 +222,10 @@ if rel in os.environ.get('FAIL_URLS', '').split(','):
             dest = scripts / name
             dest.write_text('fixture')
             dest.chmod(0o644)
-        source = SCRIPT.read_text().rsplit('\nmain\n', 1)[0]
-        source += '\nSCRIPTS_FILES=(copied unchanged failed)\nsync_download() {\n  case "$1" in\n    scripts/copied) return 0 ;;\n    scripts/unchanged) return 1 ;;\n    scripts/failed) return 2 ;;\n  esac\n}\nsync_scripts\n'
-        result = subprocess.run([BASH, '-c', source, 'fixture', str(self.card)],
+        stub = ('source "$1" "$2"\nSCRIPTS_FILES=(copied unchanged failed)\n'
+                'sync_download() {\n  case "$1" in\n    scripts/copied) return 0 ;;\n'
+                '    scripts/unchanged) return 1 ;;\n    scripts/failed) return 2 ;;\n  esac\n}\nsync_scripts\n')
+        result = subprocess.run([BASH, '-c', stub, 'fixture', str(SCRIPT), str(self.card)],
                                 env=self.env, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         for name in ('copied', 'unchanged'):
@@ -462,6 +467,223 @@ if rel in os.environ.get('FAIL_URLS', '').split(','):
         self.assertIn('failed: distribution manifest', self.log.read_text())
         self.assertFalse((self.card / 'scripts/.manifest').exists())
         self.assertFalse((self.card / 'scripts/.manifest.tmp').exists())
+
+
+class CacheSafety(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix='mister-cache-test-')
+        self.addCleanup(self.tmp.cleanup)
+        self.base = Path(self.tmp.name)
+        self.card = self.base / 'card'
+        self.card.mkdir()
+        for marker in ('MiSTer', 'menu.rbf'):
+            (self.card / marker).write_bytes(b'card marker')
+        self.cache = self.base / 'cache'
+        self.cache.write_text('NES/previous.nes\tNES f 1 2\n')
+        self.env = dict(os.environ, CACHE_FILE=str(self.cache),
+                        MISTER_TIDY_LOG_FILE=str(self.base / 'log'))
+
+    def run_cache(self):
+        return run_stage('build_cache', self.card, self.env)
+
+    def assert_preserved(self):
+        self.assertEqual(self.cache.read_text(), 'NES/previous.nes\tNES f 1 2\n')
+        self.assertEqual(list(self.base.glob('cache.*')), [])
+
+    def test_missing_games_root_preserves_cache(self):
+        self.assertNotEqual(self.run_cache().returncode, 0)
+        self.assert_preserved()
+
+    def test_failed_scan_preserves_cache_and_removes_partial_files(self):
+        (self.card / 'games/NES').mkdir(parents=True)
+        bindir = self.base / 'bin'
+        bindir.mkdir()
+        find = bindir / 'find'
+        find.write_text('#!/bin/bash\nprintf "partial"\nexit 1\n')
+        find.chmod(0o755)
+        self.env['PATH'] = str(bindir) + ':' + os.environ['PATH']
+        self.assertNotEqual(self.run_cache().returncode, 0)
+        self.assert_preserved()
+
+    def test_old_temp_symlink_is_not_followed(self):
+        nes = self.card / 'games/NES'
+        nes.mkdir(parents=True)
+        (nes / 'keep.nes').write_bytes(b'rom')
+        outside = self.base / 'outside'
+        outside.write_bytes(b'outside original')
+        old_temp = self.base / 'cache.tmp'
+        old_temp.symlink_to(outside)
+        self.assertEqual(self.run_cache().returncode, 0)
+        self.assertEqual(outside.read_bytes(), b'outside original')
+        self.assertTrue(old_temp.is_symlink())
+        self.assertEqual(self.cache.read_text(), 'NES/keep.nes\tNES f 1 2\n')
+        self.assertEqual(list(self.base.glob('cache.tmp.*')), [])
+        self.assertEqual(list(self.base.glob('cache.scan.*')), [])
+
+    def test_directory_destination_is_refused(self):
+        (self.card / 'games/NES').mkdir(parents=True)
+        self.cache.unlink()
+        self.cache.mkdir()
+        self.assertNotEqual(self.run_cache().returncode, 0)
+        self.assertEqual(list(self.cache.iterdir()), [])
+        self.assertEqual(list(self.base.glob('cache.*')), [])
+
+    def test_family_symlinks_refuse_without_replacing_cache(self):
+        games = self.card / 'games'
+        games.mkdir()
+        outside = self.base / 'outside'
+        outside.mkdir()
+        (outside / 'keep.nes').write_bytes(b'outside')
+        family = games / 'NES'
+        for target in (outside, self.base / 'missing'):
+            with self.subTest(target=target):
+                family.symlink_to(target, target_is_directory=True)
+                self.assertNotEqual(self.run_cache().returncode, 0)
+                self.assert_preserved()
+                self.assertEqual((outside / 'keep.nes').read_bytes(), b'outside')
+                family.unlink()
+
+    def test_success_with_optional_missing_families(self):
+        nes = self.card / 'games/NES'
+        nes.mkdir(parents=True)
+        (nes / 'keep.nes').write_bytes(b'rom')
+        self.assertEqual(self.run_cache().returncode, 0)
+        self.assertEqual(self.cache.read_text(), 'NES/keep.nes\tNES f 1 2\n')
+        self.assertEqual(list(self.base.glob('cache.*')), [])
+
+
+class CleanSafety(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix='mister-clean-test-')
+        self.addCleanup(self.tmp.cleanup)
+        self.base = Path(self.tmp.name)
+        self.card = self.base / 'card'
+        self.card.mkdir()
+        for name in ('MiSTer', 'menu.rbf'):
+            (self.card / name).write_bytes(b'card marker')
+        self.home = self.base / 'home'
+        self.home.mkdir()
+        self.env = dict(os.environ, HOME=str(self.home),
+                        MISTER_TIDY_LOG_FILE=str(self.base / 'audit.log'))
+
+    def run_clean(self, target):
+        return run_stage('clean_card', target, self.env)
+
+    def snapshot(self, root):
+        return {str(p.relative_to(root)): p.read_bytes()
+                for p in root.rglob('*') if p.is_file()}
+
+    def test_invalid_targets_refuse_without_mutation(self):
+        wrong = self.base / 'wrong'
+        wrong.mkdir()
+        (wrong / 'keep').write_bytes(b'untouched')
+        empty = self.base / 'empty'
+        empty.mkdir()
+        # Include a home directory that otherwise looks like a card.
+        for name in ('MiSTer', 'menu.rbf', 'keep'):
+            (self.home / name).write_bytes(b'untouched')
+        before = self.snapshot(self.base)
+        for target in ('', '/', '///', self.home, wrong, empty, self.base / 'missing'):
+            with self.subTest(target=target):
+                result = self.run_clean(target)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(self.snapshot(self.base), before)
+
+    def test_cleanup_preserves_state_and_removes_nested_blacklist(self):
+        scripts = self.card / 'scripts'
+        scripts.mkdir()
+        for name in ('.cache', '.mgl', '.manifest', '.log'):
+            (scripts / name).write_bytes(name.encode())
+        palettes = self.card / 'games/NES/Palettes'
+        palettes.mkdir(parents=True)
+        (palettes / 'test.pal').write_bytes(b'blacklisted')
+        rom = palettes.parent / 'keep.nes'
+        rom.write_bytes(b'rom')
+        (scripts / 'obsolete').write_bytes(b'delete')
+        result = self.run_clean(self.card)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for name in ('.cache', '.mgl', '.manifest', '.log'):
+            self.assertEqual((scripts / name).read_bytes(), name.encode())
+        self.assertFalse(palettes.exists())
+        self.assertEqual(rom.read_bytes(), b'rom')
+        self.assertFalse((scripts / 'obsolete').exists())
+
+    def test_removed_platforms_are_pruned_but_sms_survives(self):
+        for name in ('games/S32X/game.32x', 'games/NeoGeoPocket/game.ngp', 'S32X_20261016.rbf',
+                     'games/SMS/nested/game.gg', 'games/SMS/other.Gg',
+                     'games/SMS/keep.sms'):
+            dest = self.card / name
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b'fixture')
+        result = self.run_clean(self.card)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse((self.card / 'games/S32X').exists())
+        self.assertFalse((self.card / 'games/NeoGeoPocket').exists())
+        self.assertFalse((self.card / 'S32X_20261016.rbf').exists())
+        self.assertFalse((self.card / 'games/SMS/nested/game.gg').exists())
+        self.assertFalse((self.card / 'games/SMS/other.Gg').exists())
+        self.assertEqual((self.card / 'games/SMS/keep.sms').read_bytes(), b'fixture')
+
+    def test_games_pruning_covers_loose_hidden_and_dangling_entries(self):
+        games = self.card / 'games'
+        (games / 'NES').mkdir(parents=True)
+        (games / 'NES/keep.nes').write_bytes(b'rom')
+        (games / 'loose.bin').write_bytes(b'unsupported')
+        (games / '.hidden').mkdir()
+        (games / '.hidden/keep').write_bytes(b'unsupported')
+        (games / 'dangling').symlink_to(self.base / 'missing')
+        outside = self.base / 'outside'
+        outside.mkdir()
+        (outside / 'keep').write_bytes(b'outside')
+        (games / 'unsupported-link').symlink_to(outside, target_is_directory=True)
+        result = self.run_clean(self.card)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual([p.name for p in games.iterdir()], ['NES'])
+        self.assertEqual((games / 'NES/keep.nes').read_bytes(), b'rom')
+        self.assertEqual((outside / 'keep').read_bytes(), b'outside')
+
+    def test_case_collision_preserves_every_file(self):
+        upper = self.card / 'Games'
+        lower = self.card / 'games'
+        upper.mkdir()
+        if lower.exists():
+            self.skipTest('Games/games coexistence requires a case-sensitive filesystem')
+        lower.mkdir()
+        (upper / 'a').write_bytes(b'upper contents')
+        (lower / 'b').write_bytes(b'lower contents')
+        before = self.snapshot(self.card)
+        self.assertNotEqual(self.run_clean(self.card).returncode, 0)
+        self.assertEqual(self.snapshot(self.card), before)
+
+    def test_case_only_rename_preserves_rom(self):
+        rom = self.card / 'Games/nes/keep.nes'
+        rom.parent.mkdir(parents=True)
+        rom.write_bytes(b'rom')
+        result = self.run_clean(self.card)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual((self.card / 'games/NES/keep.nes').read_bytes(), b'rom')
+
+    def test_symlink_card_folder_refuses(self):
+        outside = self.base / 'outside'
+        outside.mkdir()
+        (outside / 'keep').write_bytes(b'outside')
+        (self.card / 'games').symlink_to(outside, target_is_directory=True)
+        self.assertNotEqual(self.run_clean(self.card).returncode, 0)
+        self.assertEqual((outside / 'keep').read_bytes(), b'outside')
+
+    def test_collision_guard_preserves_distinct_destinations(self):
+        # Exercise the guard even on case-insensitive host filesystems.
+        a, b = self.base / 'source', self.base / 'destination'
+        a.mkdir()
+        b.mkdir()
+        (a / 'a').write_bytes(b'source')
+        (b / 'b').write_bytes(b'destination')
+        before = (self.snapshot(a), self.snapshot(b))
+        result = subprocess.run([BASH, '-c', 'source "$1" "$2"; move_or_rename "$3" "$4"',
+                                 'fixture', str(UPDATE), str(self.card), str(a), str(b)],
+                                env=self.env, capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual((self.snapshot(a), self.snapshot(b)), before)
 
 
 if __name__ == '__main__':

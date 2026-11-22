@@ -17,12 +17,11 @@ class BootstrapSafety(unittest.TestCase):
         self.home = self.card('home')
         self.payload = self.base / 'payload/scripts'
         self.payload.mkdir(parents=True)
-        for name in ('.clean.sh', '.cache.sh', 'delete.sh', 'repeat.sh', 'shuffle.sh', 'update.sh'):
-            source = ((REPO / 'scripts/.clean.sh').read_text() if name == '.clean.sh'
-                      else '#!/bin/bash\nexit 0\n')
-            if name == 'update.sh':
-                source = '#!/bin/bash\nexec "$1/scripts/.cache.sh" "$1"\n'
-            (self.payload / name).write_text(source)
+        for name in ('delete.sh', 'repeat.sh', 'shuffle.sh'):
+            (self.payload / name).write_text('#!/bin/bash\nexit 0\n')
+        # The installer runs update.sh --clean; run only the real clean stage offline.
+        (self.payload / 'update.sh').write_text(
+            f'#!/bin/bash\nsource "{REPO / "scripts/update.sh"}" "$@"\nclean_card\n')
         self.env = dict(os.environ, HOME=str(self.home),
                         REPO_BASE_URL=self.payload.parent.as_uri())
 
@@ -77,25 +76,19 @@ class BootstrapSafety(unittest.TestCase):
         self.assertEqual((card / 'scripts/personal.sh').read_bytes(), b'personal helper')
         self.assertTrue((card / 'scripts/mister-tidy.sh').exists())
 
-    def test_failed_update_or_cache_preserves_bootstrap(self):
-        for failure in ('update.sh', '.cache.sh'):
-            with self.subTest(failure=failure):
-                card = self.card('card-' + failure)
-                for name in ('update.sh', '.cache.sh'):
-                    if name == failure:
-                        (self.payload / name).write_text('#!/bin/bash\nexit 9\n')
-                    elif name == 'update.sh':
-                        (self.payload / name).write_text('#!/bin/bash\nexec "$1/scripts/.cache.sh" "$1"\n')
-                before = (card / 'scripts/mister-tidy.sh').read_bytes()
-                result = self.run_bootstrap(card)
-                self.assertNotEqual(result.returncode, 0)
-                self.assertEqual((card / 'scripts/mister-tidy.sh').read_bytes(), before)
+    def test_failed_update_preserves_bootstrap(self):
+        card = self.card('card')
+        (self.payload / 'update.sh').write_text('#!/bin/bash\nexit 9\n')
+        before = (card / 'scripts/mister-tidy.sh').read_bytes()
+        result = self.run_bootstrap(card)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual((card / 'scripts/mister-tidy.sh').read_bytes(), before)
 
     def test_payload_download_ignores_old_temp_symlink(self):
         card = self.card('card')
         outside = self.base / 'outside'
         outside.write_bytes(b'outside original')
-        (card / 'scripts/.clean.sh.tmp').symlink_to(outside)
+        (card / 'scripts/delete.sh.tmp').symlink_to(outside)
         result = self.run_bootstrap(card)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(outside.read_bytes(), b'outside original')
@@ -103,19 +96,19 @@ class BootstrapSafety(unittest.TestCase):
 
     def test_failed_payload_fetch_preserves_script_and_removes_temp(self):
         card = self.card('card')
-        original = card / 'scripts/.clean.sh'
-        original.write_bytes(b'original clean script')
-        (self.payload / '.clean.sh').unlink()
+        original = card / 'scripts/delete.sh'
+        original.write_bytes(b'original delete script')
+        (self.payload / 'delete.sh').unlink()
         self.assertNotEqual(self.run_bootstrap(card).returncode, 0)
-        self.assertEqual(original.read_bytes(), b'original clean script')
+        self.assertEqual(original.read_bytes(), b'original delete script')
         self.assertEqual(list((card / 'scripts').glob('*.tmp.*')), [])
 
     def test_earlier_helper_stays_executable_when_later_fetch_fails(self):
         card = self.card('card')
-        (self.payload / '.cache.sh').unlink()
+        (self.payload / 'update.sh').unlink()
         self.assertNotEqual(self.run_bootstrap(card).returncode, 0)
-        helper = card / 'scripts/.clean.sh'
-        self.assertEqual(helper.read_bytes(), (self.payload / '.clean.sh').read_bytes())
+        helper = card / 'scripts/delete.sh'
+        self.assertEqual(helper.read_bytes(), (self.payload / 'delete.sh').read_bytes())
         self.assertEqual(helper.stat().st_mode & 0o777, 0o755)
         self.assertTrue((card / 'scripts/mister-tidy.sh').exists())
         self.assertEqual(list((card / 'scripts').glob('*.tmp.*')), [])
@@ -127,7 +120,7 @@ class BootstrapSafety(unittest.TestCase):
         self.assertIn('migration complete', result.stdout)
         self.assertFalse((card / 'scripts/personal.sh').exists())
         self.assertFalse((card / 'scripts/mister-tidy.sh').exists())
-        self.assertTrue((card / 'scripts/.clean.sh').exists())
+        self.assertTrue((card / 'scripts/update.sh').exists())
         for script in (card / 'scripts').glob('*.sh'):
             self.assertEqual(script.stat().st_mode & 0o111, 0o111)
 

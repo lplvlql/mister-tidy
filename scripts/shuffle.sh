@@ -21,56 +21,23 @@ stage() {
 
 stage 'shuffle'
 
-params_for_file() {
-	local rel="$1"
-	local folder="${rel%%/*}"
-	local ext="${rel##*.}"
-	ext="$(printf '%s' "$ext" | tr '[:upper:]' '[:lower:]')"
-
-	case "${folder}:${ext}" in
-		Gameboy:gb|Gameboy:gbc|GBA:gba|NES:nes|NES:fds)
-			printf 'f 1 2\n'
-			;;
-		SNES:sfc|SNES:smc|SNES:bin|SNES:bs)
-			printf 'f 0 2\n'
-			;;
-		TGFX16:bin|TGFX16:pce)
-			printf 'f 0 1\n'
-			;;
-		MegaDrive:bin|MegaDrive:gen|MegaDrive:md|SMS:sms|N64:n64|N64:z64|NeoGeo:neo)
-			printf 'f 1 1\n'
-			;;
-		MegaCD:cue|MegaCD:chd|Saturn:cue|Saturn:chd|PSX:cue|PSX:chd|PSX:exe)
-			printf 's 0 1\n'
-			;;
-		TGFX16-CD:cue|TGFX16-CD:chd|NeoGeo-CD:cue|NeoGeo-CD:chd)
-			printf 's 1 1\n'
-			;;
-		*)
-			return 1
-			;;
-	esac
-}
-
 xml_escape() {
 	# Escape ampersand first; sed replacement literals work across Bash versions.
 	printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g'
 }
 
+# The cache's second column is "core type index delay" (see build_cache in update.sh).
 build_mgl() {
-	local core="$1"
+	local launch="$1"
 	local rel="$2"
 	local file="${GAMES_ROOT%/}/${rel}"
-	local type
-	local index
-	local delay
-	local params tmp escaped_core escaped_file
+	local core type index delay tmp escaped_core escaped_file
 
-	if ! params="$(params_for_file "$rel")"; then
+	read -r core type index delay <<<"$launch"
+	if [[ -z "$delay" ]]; then
 		echo "Unsupported game type: $rel" >&2
 		return 1
 	fi
-	read -r type index delay <<<"$params"
 
 	if ! escaped_core="$(xml_escape "$core")" || ! escaped_file="$(xml_escape "$file")"; then
 		echo "Failed to escape MGL values" >&2
@@ -161,7 +128,7 @@ fi
 index="$(random_index "${#games[@]}")" || exit 1
 choice="${games[$index]}"
 rel="${choice%%$'\t'*}"
-core="${choice#*$'\t'}"
+launch="${choice#*$'\t'}"
 
 printf 'picked: %s\n' "$rel" >>"$LOG_FILE"
 
@@ -172,7 +139,7 @@ if [[ "$history" != /dev/null ]]; then
 fi
 printf '%s\n' "$rel" >> "$history_tmp"
 
-mgl="$(build_mgl "$core" "$rel")" || exit 1
+mgl="$(build_mgl "$launch" "$rel")" || exit 1
 printf 'load_core %s\n' "$mgl" > "$MISTER_CMD"
 mv -f -- "$history_tmp" "$SHUFFLE_FILE"
 printf 'done\n'

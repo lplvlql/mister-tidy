@@ -8,6 +8,7 @@ import xml.etree.ElementTree as ET
 
 BASH = os.environ.get('MISTER_TEST_BASH', '/bin/bash')
 SCRIPTS = Path(__file__).resolve().parents[1] / 'scripts'
+from test_update import run_stage
 
 
 class LaunchDelete(unittest.TestCase):
@@ -18,6 +19,8 @@ class LaunchDelete(unittest.TestCase):
         self.card = self.base / 'card'
         self.games = self.card / 'games'
         self.games.mkdir(parents=True)
+        for marker in ('MiSTer', 'menu.rbf'):
+            (self.card / marker).write_bytes(b'card marker')
         self.cache = self.base / 'cache'
         self.mgl = self.base / 'last.mgl'
         self.command = self.base / 'command'
@@ -36,7 +39,7 @@ class LaunchDelete(unittest.TestCase):
 
     def test_shuffle_plays_every_game_before_reset(self):
         games = {str(self.game(f'NES/{name}.nes')) for name in ('a', 'b', 'c')}
-        self.assertEqual(self.run_script('.cache.sh').returncode, 0)
+        self.assertEqual(run_stage('build_cache', self.card, self.env).returncode, 0)
         picks = []
         for _ in range(6):
             result = self.run_script('shuffle.sh')
@@ -48,8 +51,8 @@ class LaunchDelete(unittest.TestCase):
     def test_cache_excludes_removed_platforms_and_keeps_sms(self):
         for name in ('SMS/test.gg', 'SMS/test.GG', 'S32X/test.32x', 'SMS/keep.sms'):
             self.game(name)
-        self.assertEqual(self.run_script('.cache.sh').returncode, 0)
-        self.assertEqual(self.cache.read_text(), 'SMS/keep.sms\tSMS\n')
+        self.assertEqual(run_stage('build_cache', self.card, self.env).returncode, 0)
+        self.assertEqual(self.cache.read_text(), 'SMS/keep.sms\tSMS f 1 1\n')
         self.assertEqual(self.run_script('shuffle.sh').returncode, 0)
         entry = ET.parse(self.mgl).find('file')
         self.assertEqual(entry.attrib['type'], 'f')
@@ -73,7 +76,7 @@ class LaunchDelete(unittest.TestCase):
 
     def test_mgl_open_failure_never_sends_launch_command(self):
         self.game('NES/test.nes')
-        self.cache.write_text('NES/test.nes\tNES\n')
+        self.cache.write_text('NES/test.nes\tNES f 1 2\n')
         self.env['MGL_FILE'] = str(self.base / 'missing-parent/last.mgl')
         self.command.write_text('previous command')
         result = self.run_script('shuffle.sh')
@@ -84,7 +87,7 @@ class LaunchDelete(unittest.TestCase):
 
     def test_mgl_stream_write_failure_never_sends_launch_command(self):
         self.game('NES/test.nes')
-        self.cache.write_text('NES/test.nes\tNES\n')
+        self.cache.write_text('NES/test.nes\tNES f 1 2\n')
         bindir = self.base / 'bin'
         bindir.mkdir()
         cat = bindir / 'cat'
@@ -103,25 +106,25 @@ class LaunchDelete(unittest.TestCase):
     def test_delete_prunes_cache_and_stale_entries_cannot_launch(self):
         target = self.game('NES/A [x] & B.nes')
         self.game('NES/keep.nes')
-        self.cache.write_text('NES/A [x] & B.nes\tNES\n')
+        self.cache.write_text('NES/A [x] & B.nes\tNES f 1 2\n')
         self.assertEqual(self.run_script('shuffle.sh').returncode, 0)
-        self.cache.write_text('NES/A [x] & B.nes\tNES\nNES/keep.nes\tNES\n')
+        self.cache.write_text('NES/A [x] & B.nes\tNES f 1 2\nNES/keep.nes\tNES f 1 2\n')
         self.assertEqual(self.run_script('delete.sh').returncode, 0)
         self.assertFalse(target.exists())
-        self.assertEqual(self.cache.read_text(), 'NES/keep.nes\tNES\n')
-        self.cache.write_text('NES/A [x] & B.nes\tNES\n')
+        self.assertEqual(self.cache.read_text(), 'NES/keep.nes\tNES f 1 2\n')
+        self.cache.write_text('NES/A [x] & B.nes\tNES f 1 2\n')
         self.command.write_text('no launch')
         self.mgl.write_text('previous last game')
         self.assertNotEqual(self.run_script('shuffle.sh').returncode, 0)
         self.assertEqual(self.command.read_text(), 'no launch')
         self.assertEqual(self.mgl.read_text(), 'previous last game')
-        self.cache.write_text('NES/missing.nes\tNES\nNES/keep.nes\tNES\n')
+        self.cache.write_text('NES/missing.nes\tNES f 1 2\nNES/keep.nes\tNES f 1 2\n')
         self.assertEqual(self.run_script('shuffle.sh').returncode, 0)
         self.assertTrue(ET.parse(self.mgl).find('file').attrib['path'].endswith('/NES/keep.nes'))
 
     def test_mgl_directory_destination_is_not_treated_as_success(self):
         self.game('NES/test.nes')
-        self.cache.write_text('NES/test.nes\tNES\n')
+        self.cache.write_text('NES/test.nes\tNES f 1 2\n')
         self.mgl.mkdir()
         self.command.write_text('no launch')
         self.assertNotEqual(self.run_script('shuffle.sh').returncode, 0)
@@ -131,7 +134,7 @@ class LaunchDelete(unittest.TestCase):
 
     def test_mgl_rename_failure_preserves_previous_selection(self):
         self.game('NES/test.nes')
-        self.cache.write_text('NES/test.nes\tNES\n')
+        self.cache.write_text('NES/test.nes\tNES f 1 2\n')
         self.mgl.write_text('previous valid MGL')
         bindir = self.base / 'bin'
         bindir.mkdir()
@@ -147,7 +150,7 @@ class LaunchDelete(unittest.TestCase):
 
     def test_escape_failure_preserves_mgl_and_sends_no_command(self):
         self.game('NES/test.nes')
-        self.cache.write_text('NES/test.nes\tNES\n')
+        self.cache.write_text('NES/test.nes\tNES f 1 2\n')
         self.mgl.write_text('previous MGL')
         self.command.write_text('previous command')
         bindir = self.base / 'bin'
@@ -210,7 +213,7 @@ class LaunchDelete(unittest.TestCase):
     def test_last_reloads_valid_escaped_rom_and_refuses_after_removal(self):
         name = 'NES/nested/A "quoted" <B> & literal &lt;.nes'
         target = self.game(name)
-        self.cache.write_text(f'{name}\tNES\n')
+        self.cache.write_text(f'{name}\tNES f 1 2\n')
         self.assertEqual(self.run_script('shuffle.sh').returncode, 0)
         self.command.write_text('previous command')
         self.assertEqual(self.run_script('repeat.sh').returncode, 0)
@@ -253,7 +256,7 @@ class LaunchDelete(unittest.TestCase):
             with self.subTest(name=name):
                 target = self.game('NES/' + name)
                 decoy = self.game('NES/keep.nes')
-                self.cache.write_text(f'NES/{name}\tNES\n')
+                self.cache.write_text(f'NES/{name}\tNES f 1 2\n')
                 self.assertEqual(self.run_script('shuffle.sh').returncode, 0)
                 self.assertEqual(ET.parse(self.mgl).find('file').attrib['path'], str(target))
                 result = self.run_script('delete.sh')
